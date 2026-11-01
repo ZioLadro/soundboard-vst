@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.1.1 — 2026-11-02
+
+### Correzioni
+- Avviso «Possibile eco su Discord» all'avvio dell'audio se l'ingresso registra l'audio del PC
+  (CABLE Output, Missaggio stereo), se il monitor è il cavo virtuale o se il cavo è il dispositivo
+  di riproduzione predefinito di Windows.
+- Al primo avvio non viene più scelto un ingresso loopback come microfono.
+- Nelle impostazioni i dispositivi a rischio eco sono segnalati con ⚠.
+- README: sezione su come eliminare l'eco.
+
 ## v0.1.0 — 2026-11-01
 
 Prima versione.

@@ -79,6 +79,18 @@ In Impostazioni c'è un pulsante che apre la pagina di download ufficiale.
 
 Lo stesso vale per qualsiasi altro programma: basta scegliere «CABLE Output» come microfono.
 
+## Gli altri sentono la propria voce (eco)
+
+Succede quando l'audio di Discord rientra nel cavo virtuale e torna nel microfono. Controlla:
+
+1. **Discord → Voce e video → Dispositivo di output**: devono essere le tue cuffie, **non** «CABLE Input» né «Predefinito» se il predefinito è il cavo.
+2. **Windows → Impostazioni → Sistema → Audio → Output**: il dispositivo predefinito devono essere le cuffie, non «CABLE Input» (l'installazione di VB-Cable a volte lo imposta da sola).
+3. **Ingresso della soundboard**: deve essere il microfono, non «CABLE Output» o «Missaggio stereo», che registrano l'audio del PC.
+4. **Monitor della soundboard**: le cuffie, non il cavo.
+5. Se usi le **casse** invece delle cuffie, il microfono riprende le voci degli altri: usa le cuffie, oppure lascia attiva la **cancellazione dell'eco** di Discord.
+
+La soundboard riconosce i casi 2, 3 e 4 e mostra un avviso quando avvii l'audio.
+
 ## Cercare suoni su MyInstants
 
 Premi **Cerca su MyInstants** nella tab Soundboard, scrivi cosa cerchi e premi Invio (oppure

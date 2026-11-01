@@ -106,3 +106,24 @@ def test_no_output_is_an_error(monkeypatch):
     setup_fake(monkeypatch)
     st = AudioEngine(48000, N).start("Windows WASAPI", "Microfono (USB)", "", "")
     assert not st.running
+
+
+def test_echo_risks(monkeypatch):
+    fake = setup_fake(monkeypatch)
+    api = "Windows WASAPI"
+    assert devices.echo_risks(api, "Microfono (USB)", "CABLE Input (VB-Audio Virtual Cable)", "Cuffie (Realtek)") == []
+
+    devs = fake.query_devices()
+    devs.append({"name": "CABLE Output (VB-Audio Virtual Cable)", "hostapi": 0, "max_input_channels": 2,
+                 "max_output_channels": 0, "default_samplerate": 48000})
+    monkeypatch.setattr(fake, "query_devices", lambda: devs)
+    risks = devices.echo_risks(api, "CABLE Output (VB-Audio Virtual Cable)", "CABLE Input", "CABLE Input")
+    assert len(risks) == 2  # ingresso loopback + monitor sul cavo
+
+    # Windows usa il cavo come riproduzione predefinita
+    monkeypatch.setattr(fake, "query_hostapis",
+                        lambda: [{"name": api, "default_input_device": 3, "default_output_device": 1}])
+    risks = devices.echo_risks(api, "Microfono (USB)", "CABLE Input", "Cuffie (Realtek)")
+    assert len(risks) == 1 and "predefinito" in risks[0]
+    # il microfono predefinito che è un loopback viene scartato al primo avvio
+    assert devices.default_device(api, "input").name == "Microfono (USB)"

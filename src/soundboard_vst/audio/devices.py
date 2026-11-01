@@ -35,6 +35,10 @@ def audio_available() -> bool:
 VIRTUAL_CABLE_HINTS = ("cable input", "vb-audio", "voicemeeter input", "voicemeeter aux input",
                        "blackhole", "soundboard_sink")
 
+# Ingressi che registrano l'audio del PC invece di un microfono
+LOOPBACK_INPUT_HINTS = ("cable output", "stereo mix", "missaggio stereo", "mix stereo", "stereomix",
+                        "what u hear", "voicemeeter out", "loopback", "blackhole", "monitor of")
+
 
 @dataclass(frozen=True)
 class Device:
@@ -53,6 +57,11 @@ class Device:
     def looks_virtual(self) -> bool:
         n = self.name.lower()
         return any(h in n for h in VIRTUAL_CABLE_HINTS)
+
+    @property
+    def looks_loopback(self) -> bool:
+        n = self.name.lower()
+        return self.looks_virtual or any(h in n for h in LOOPBACK_INPUT_HINTS)
 
 
 def host_apis() -> list[str]:
@@ -120,7 +129,42 @@ def default_device(host_api: str, kind: str) -> Device | None:
     found = next((d for d in pool if d.index == idx), None)
     if kind == "output" and found and found.looks_virtual:
         found = next((d for d in pool if not d.looks_virtual), None)
+    if kind == "input" and found and found.looks_loopback:
+        found = next((d for d in pool if not d.looks_loopback), None)
     return found
+
+
+def system_default_output(host_api: str) -> Device | None:
+    """Dispositivo di riproduzione predefinito di Windows (senza filtri)."""
+    try:
+        api = next((h for h in sd().query_hostapis() if h["name"] == host_api), None)
+    except RuntimeError:
+        return None
+    idx = api["default_output_device"] if api else -1
+    return next((d for d in outputs(host_api) if d.index == idx), None)
+
+
+def echo_risks(host_api: str, input_name: str, virtual_name: str, monitor_name: str) -> list[str]:
+    """Configurazioni che fanno sentire agli altri la propria voce (eco) su Discord."""
+    risks: list[str] = []
+    inp = find(input_name, host_api, "input")
+    if inp and inp.looks_loopback:
+        risks.append(
+            f"L'ingresso «{inp.name}» registra l'audio del PC, non il microfono: anche le voci "
+            "degli altri finiscono nel mix e tornano a loro come eco. Scegli il tuo microfono come ingresso.")
+    mon = find(monitor_name, host_api, "output")
+    if mon and mon.looks_virtual:
+        risks.append(
+            f"Il monitor è impostato su «{mon.name}»: quello che dovresti sentire tu finisce nel cavo "
+            "e arriva a Discord. Imposta le cuffie come monitor.")
+    default = system_default_output(host_api)
+    if default and default.looks_virtual:
+        risks.append(
+            f"Il dispositivo di riproduzione predefinito di Windows è «{default.name}»: tutto l'audio "
+            "del PC, compreso Discord se usa «Predefinito», entra nel cavo e torna agli altri come eco. "
+            "Imposta le cuffie come predefinite (Impostazioni di Windows → Sistema → Audio) e in Discord "
+            "scegli le cuffie come dispositivo di output.")
+    return risks
 
 
 def guess_virtual_output(host_api: str = "") -> Device | None:

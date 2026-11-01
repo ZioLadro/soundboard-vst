@@ -35,6 +35,7 @@ class MainWindow(QMainWindow):
         self.engine = AudioEngine(a.get("sample_rate", 48000), a.get("block_size", 512))
         self.cache = SoundCache(self.engine.sample_rate)
         self._vst_cache: list[Path] | None = None
+        self._echo_warned: tuple = ()
         self._save_timer = QTimer(self, singleShot=True, interval=800)
         self._save_timer.timeout.connect(self.save)
 
@@ -140,6 +141,22 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(" · ".join(st.warnings), 10000)
         if not st.running:
             QMessageBox.warning(self, "Audio", st.message)
+            return
+        self.check_echo()
+
+    def check_echo(self) -> None:
+        """Avvisa se la configurazione fa sentire agli altri la propria voce su Discord."""
+        a = self.config.data["audio"]
+        risks = devices.echo_risks(a.get("host_api", ""), a.get("input_device", ""),
+                                   a.get("virtual_output", ""), a.get("monitor_output", ""))
+        key = tuple(risks)
+        if not risks or key == self._echo_warned:
+            return
+        self._echo_warned = key
+        QMessageBox.warning(
+            self, "Possibile eco su Discord",
+            "Con questa configurazione chi è in canale potrebbe sentire la propria voce:\n\n• "
+            + "\n\n• ".join(risks))
 
     def toggle_audio(self) -> None:
         if self.engine.status.running:

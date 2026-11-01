@@ -126,18 +126,24 @@ class SettingsDialog(QDialog):
         ins = devices.inputs(api)
         outs = devices.outputs(api)
 
-        def fill(combo: QComboBox, items, selected: str, mark_virtual=False):
+        def fill(combo: QComboBox, items, selected: str, mark_virtual=False, mark_loopback=False):
             prev = combo.currentData() if combo.count() else None
             combo.clear()
             combo.addItem(NONE_LABEL, "")
             for d in items:
-                label = d.name + ("   ★ cavo virtuale" if mark_virtual and d.looks_virtual else "")
+                label = d.name
+                if mark_virtual and d.looks_virtual:
+                    label += "   ★ cavo virtuale"
+                elif mark_loopback and d.looks_loopback:
+                    label += "   ⚠ registra l'audio del PC (eco)"
+                elif not mark_virtual and not mark_loopback and d.looks_virtual:
+                    label += "   ⚠ cavo virtuale (eco)"
                 combo.addItem(label, d.name)
             target = prev if prev else selected
             idx = combo.findData(target)
             combo.setCurrentIndex(idx if idx >= 0 else 0)
 
-        fill(self.input, ins, a.get("input_device", ""))
+        fill(self.input, ins, a.get("input_device", ""), mark_loopback=True)
         fill(self.virtual, outs, a.get("virtual_output", ""), mark_virtual=True)
         fill(self.monitor, outs, a.get("monitor_output", ""))
         if not self.virtual.currentData():
