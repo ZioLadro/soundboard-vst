@@ -270,7 +270,6 @@ class MixerView(QWidget):
             row.addWidget(w)
             if strip is engine.monitor:
                 self._add_monitor_options(w)
-        row.addStretch(1)
 
     def _add_monitor_options(self, w: StripWidget) -> None:
         label = QLabel("ASCOLTA")

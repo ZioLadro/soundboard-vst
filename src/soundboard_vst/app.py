@@ -7,18 +7,19 @@ from pathlib import Path
 
 from PySide6.QtCore import QByteArray, Qt, QTimer
 from PySide6.QtWidgets import (
-    QApplication, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QSplitter,
+    QApplication, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QTabWidget,
     QVBoxLayout, QWidget,
 )
 
 from . import APP_NAME, __version__
 from .audio import devices
 from .audio.engine import AudioEngine
-from .audio.library import SoundCache
+from .audio.library import SoundCache, decode
 from .audio.plugins import scan_vst3
-from .config import Config
+from .config import Config, config_dir
 from .ui import theme
 from .ui.mixer_view import MixerView
+from .ui.myinstants_dialog import MyInstantsDialog
 from .ui.settings_dialog import SettingsDialog
 from .ui.soundboard_view import SoundboardView
 
@@ -54,34 +55,34 @@ class MainWindow(QMainWindow):
         header.addWidget(settings_btn)
         header.addWidget(self.audio_btn)
 
-        # Soundboard + mixer ------------------------------------------------------
+        # Tab: Soundboard e Mixer ----------------------------------------------------
         self.board = SoundboardView(config, self.cache)
         self.board.play_requested.connect(self.play_sound)
         self.board.stop_requested.connect(self.engine.stop_sounds)
+        self.board.myinstants_requested.connect(self.open_myinstants)
         self.board.changed.connect(self.schedule_save)
 
         self.mixer = MixerView(self.engine, self.vst_plugins, self.rescan_vst)
         self.mixer.changed.connect(self.schedule_save)
-        mixer_title = QLabel("MIXER")
-        mixer_title.setObjectName("sectionTitle")
-        mixer_box = QWidget()
-        mb = QVBoxLayout(mixer_box)
-        mb.setContentsMargins(0, 4, 0, 0)
-        mb.addWidget(mixer_title)
-        mb.addWidget(self.mixer, 1)
+        mixer_page = QWidget()
+        mp = QVBoxLayout(mixer_page)
+        mp.setContentsMargins(0, 8, 0, 0)
+        mp.addWidget(self.mixer, 1)
 
-        self.splitter = QSplitter(Qt.Orientation.Vertical)
-        self.splitter.addWidget(self.board)
-        self.splitter.addWidget(mixer_box)
-        self.splitter.setStretchFactor(0, 3)
-        self.splitter.setStretchFactor(1, 2)
-        self.splitter.setChildrenCollapsible(False)
+        self.tabs = QTabWidget()
+        self.tabs.setObjectName("mainTabs")
+        self.tabs.setDocumentMode(True)
+        self.tabs.tabBar().setDrawBase(False)
+        self.tabs.addTab(self.board, "Soundboard")
+        self.tabs.addTab(mixer_page, "Mixer")
+        self.tabs.currentChanged.connect(lambda _: self.schedule_save())
+        self._myinstants: MyInstantsDialog | None = None
 
         central = QWidget()
         lay = QVBoxLayout(central)
         lay.setContentsMargins(12, 10, 12, 8)
         lay.addLayout(header)
-        lay.addWidget(self.splitter, 1)
+        lay.addWidget(self.tabs, 1)
         self.setCentralWidget(central)
 
         self.status_label = QLabel()
@@ -169,6 +170,34 @@ class MainWindow(QMainWindow):
         vol = float(self.config.data["sounds"].get(key, {}).get("volume", 1.0))
         self.engine.play(key, data, vol, overlap=self.board.overlap.isChecked())
 
+    # MyInstants -------------------------------------------------------------------------
+    def open_myinstants(self) -> None:
+        if self._myinstants is None:
+            self._myinstants = MyInstantsDialog(lambda: self.board.folder, self.preview_bytes,
+                                                self._on_myinstants_added, self)
+            self._myinstants.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self._myinstants.destroyed.connect(lambda: setattr(self, "_myinstants", None))
+        self._myinstants.show()
+        self._myinstants.raise_()
+        self._myinstants.activateWindow()
+
+    def _on_myinstants_added(self, path: Path) -> None:
+        self.board.add_keys([path.name])
+
+    def preview_bytes(self, data: bytes) -> None:
+        """Riproduce un suono scaricato solo in cuffia (non arriva a Discord)."""
+        if not self.engine.status.running:
+            self.statusBar().showMessage("Audio fermo: premi «Avvia audio».", 4000)
+        tmp = config_dir() / "cache" / "anteprima.mp3"
+        try:
+            tmp.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_bytes(data)
+            audio = decode(tmp, self.engine.sample_rate)
+        except Exception as exc:
+            QMessageBox.warning(self, "Anteprima", f"Impossibile riprodurre l'anteprima:\n{exc}")
+            return
+        self.engine.play("__anteprima__", audio, 1.0, preview=True)
+
     # VST3 -----------------------------------------------------------------------------
     def vst_plugins(self) -> list[Path]:
         if self._vst_cache is None:
@@ -195,7 +224,8 @@ class MainWindow(QMainWindow):
         self.config.data["mixer"] = self.engine.to_dict()
         self.config.data["window"] = {
             "geometry": bytes(self.saveGeometry().toBase64()).decode(),
-            "splitter": bytes(self.splitter.saveState().toBase64()).decode(),
+            "library_splitter": bytes(self.board.splitter.saveState().toBase64()).decode(),
+            "tab": self.tabs.currentIndex(),
         }
         try:
             self.config.save()
@@ -206,8 +236,9 @@ class MainWindow(QMainWindow):
         w = self.config.data.get("window", {})
         if w.get("geometry"):
             self.restoreGeometry(QByteArray.fromBase64(w["geometry"].encode()))
-        if w.get("splitter"):
-            self.splitter.restoreState(QByteArray.fromBase64(w["splitter"].encode()))
+        if w.get("library_splitter"):
+            self.board.splitter.restoreState(QByteArray.fromBase64(w["library_splitter"].encode()))
+        self.tabs.setCurrentIndex(int(w.get("tab", 0)) if str(w.get("tab", 0)).isdigit() else 0)
 
     def _tick(self) -> None:
         self.mixer.update_meters()

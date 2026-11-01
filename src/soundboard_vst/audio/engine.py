@@ -33,6 +33,7 @@ class Voice:
     gain: float = 1.0
     pos: int = 0
     loop: bool = False
+    preview: bool = False   # anteprima: solo in cuffia, non arriva a Discord
 
     @property
     def done(self) -> bool:
@@ -81,11 +82,12 @@ class AudioEngine:
         return next(s for s in self.strips if s.id == strip_id)
 
     # Suoni -------------------------------------------------------------------
-    def play(self, key: str, data: np.ndarray, gain: float = 1.0, overlap: bool = True) -> None:
+    def play(self, key: str, data: np.ndarray, gain: float = 1.0, overlap: bool = True,
+             preview: bool = False) -> None:
         with self._voices_lock:
-            if not overlap:
+            if not overlap or preview:
                 self._voices = [v for v in self._voices if v.key != key]
-            self._voices.append(Voice(key, data, gain))
+            self._voices.append(Voice(key, data, gain, preview=preview))
 
     def stop_sounds(self, key: str | None = None) -> None:
         with self._voices_lock:
@@ -95,13 +97,15 @@ class AudioEngine:
         with self._voices_lock:
             return {v.key for v in self._voices}
 
-    def _mix_voices(self, frames: int) -> np.ndarray:
-        out = np.zeros((2, frames), dtype=np.float32)
+    def _mix_voices(self, frames: int) -> tuple[np.ndarray, np.ndarray]:
+        main = np.zeros((2, frames), dtype=np.float32)
+        prev = np.zeros((2, frames), dtype=np.float32)
         with self._voices_lock:
             voices = list(self._voices)
         if not voices:
-            return out
+            return main, prev
         for v in voices:
+            out = prev if v.preview else main
             n_total = v.data.shape[1]
             written = 0
             while written < frames and (v.pos < n_total or v.loop):
@@ -113,7 +117,7 @@ class AudioEngine:
                 written += n
         with self._voices_lock:
             self._voices = [v for v in self._voices if not v.done]
-        return out
+        return main, prev
 
     # Rendering (thread audio) ------------------------------------------------
     def render(self, frames: int, mic_block: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
@@ -124,7 +128,8 @@ class AudioEngine:
                 else np.zeros((2, frames), dtype=np.float32)
 
         mic = self.mic.process(mic_block, sr)
-        snd = self.sounds.process(self._mix_voices(frames), sr)
+        voices, preview = self._mix_voices(frames)
+        snd = self.sounds.process(voices, sr)
         master = self.master.process(mic + snd, sr)
 
         mon_in = np.zeros((2, frames), dtype=np.float32)
@@ -132,6 +137,7 @@ class AudioEngine:
             mon_in += snd
         if self.monitor_hear_mic:
             mon_in += mic
+        mon_in += preview
         monitor = self.monitor.process(mon_in, sr)
 
         return np.clip(master, -1.0, 1.0), np.clip(monitor, -1.0, 1.0)

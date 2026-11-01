@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
     QLabel, QListWidget, QPushButton, QVBoxLayout,
@@ -50,6 +51,9 @@ class SettingsDialog(QDialog):
         hint.setWordWrap(True)
         hint.setTextFormat(Qt.TextFormat.RichText)
         hint.setStyleSheet(f"color: {theme.MUTED};")
+        vb_btn = QPushButton("Scarica VB-Cable (gratuito)…")
+        vb_btn.setToolTip("Apre la pagina ufficiale di VB-Audio nel browser")
+        vb_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://vb-audio.com/Cable/")))
 
         audio_box = QGroupBox("Audio")
         form = QFormLayout(audio_box)
@@ -63,6 +67,10 @@ class SettingsDialog(QDialog):
         form.addRow("Frequenza", self.sample_rate)
         form.addRow("Buffer", self.block)
         form.addRow(hint)
+        vb_row = QHBoxLayout()
+        vb_row.addWidget(vb_btn)
+        vb_row.addStretch(1)
+        form.addRow(vb_row)
 
         if not devices.audio_available():
             warn = QLabel("PortAudio non disponibile: impossibile elencare i dispositivi.")

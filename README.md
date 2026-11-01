@@ -4,21 +4,26 @@ Soundboard in stile Discord scritta in Python, con mixer, host per plugin VST3 e
 microfono virtuale: Discord (o OBS, Teams, Zoom, qualsiasi programma con un ingresso audio) riceve
 la tua voce **più** i suoni, già mixati ed elaborati.
 
-![Schermata](docs/screenshot.png)
+![Soundboard](docs/soundboard.png)
 
 ## Funzionalità
 
-- **Soundboard**: un pulsante per ogni file audio della cartella (`wav`, `mp3`, `ogg`, `flac`, `aif/aiff`).
-  - Cartella predefinita `Musica\Suoni`, oppure una a scelta («Cambia cartella…»).
-  - Aggiungi suoni dal pulsante o trascinandoli nella finestra; la cartella viene osservata e la griglia si aggiorna da sola.
-  - Tasto destro su un suono: volume (0–200%), scorciatoia da tastiera, rinomina, sposta nel cestino.
+- **Soundboard a pad** (tab *Soundboard*):
+  - Griglia di pad regolabile fino a 12 × 12 (predefinita 6 × 8 = 48 slot) e **pagine** illimitate, rinominabili e riordinabili.
+  - **Libreria** a sinistra con tutti i file della cartella (`wav`, `mp3`, `ogg`, `flac`, `aif/aiff`): trascina un suono su un pad per assegnarlo; i file che non sono su nessun pad appaiono in grigio.
+  - Trascina un pad su un altro per spostarli o scambiarli; clic su uno slot vuoto per assegnargli un suono.
+  - Cartella predefinita `Musica\Suoni`, oppure una a scelta. I file nuovi (aggiunti, trascinati dall'esplora risorse o scaricati) finiscono nel primo pad libero.
+  - Tasto destro su un pad: volume (0–200%), scorciatoia da tastiera, togli dal pad, rinomina, sposta nel cestino.
   - «Sovrapponi» per far suonare lo stesso suono più volte insieme, «Stop tutto» per zittire tutto.
+- **Ricerca su [MyInstants](https://www.myinstants.com)** direttamente dall'app: cerca o sfoglia le tendenze, ascolta l'anteprima solo in cuffia (non arriva a Discord), e aggiungi il suono con un clic: viene scaricato nella cartella e messo su un pad.
 - **Ingresso**: scegli microfono o scheda audio.
 - **Uscita verso Discord**: il mix va su un cavo audio virtuale, che gli altri programmi vedono come microfono.
 - **Monitor**: uscita separata per le cuffie, per sentire i suoni (e, se vuoi, te stesso).
-- **Mixer** con quattro canali — Microfono, Soundboard, Master → Discord, Monitor — ognuno con fader in dB, mute, meter stereo e catena di inserti.
+- **Mixer** (tab *Mixer*) con quattro canali — Microfono, Soundboard, Master → Discord, Monitor — ognuno con fader in dB, mute, meter stereo e catena di inserti.
 - **Host VST3**: inserisci plugin VST3 in qualsiasi canale, riordinali, mettili in bypass, apri la loro interfaccia grafica o un editor parametri generico. Lo stato dei plugin viene salvato e ripristinato.
 - **Effetti integrati** (non serve installare nulla): noise gate, compressore, limiter, filtri, EQ, riverbero, delay, chorus, distorsione, guadagno.
+
+![Mixer](docs/mixer.png)
 
 ## Flusso del segnale
 
@@ -47,6 +52,13 @@ python -m soundboard_vst
 
 Funziona anche su Linux e macOS (su Linux serve `libportaudio2`; come cavo virtuale si può usare un sink PipeWire/PulseAudio, su macOS BlackHole).
 
+## Perché serve VB-Cable
+
+Windows non permette a un programma di creare da solo un nuovo microfono: per farlo serve un driver
+audio, ed è proprio quello che installa VB-Audio Virtual Cable (gratuito, una volta sola). Senza un
+cavo virtuale la soundboard funziona lo stesso, ma i suoni li senti solo tu in cuffia.
+In Impostazioni c'è un pulsante che apre la pagina di download ufficiale.
+
 ## Collegarla a Discord
 
 1. Apri **Impostazioni** nella soundboard:
@@ -59,6 +71,16 @@ Funziona anche su Linux e macOS (su Linux serve `libportaudio2`; come cavo virtu
 
 Lo stesso vale per qualsiasi altro programma: basta scegliere «CABLE Output» come microfono.
 
+## Cercare suoni su MyInstants
+
+Premi **Cerca su MyInstants** nella tab Soundboard, scrivi cosa cerchi e premi Invio (oppure
+**Tendenze** per i più popolari in Italia). Doppio clic o **Ascolta in cuffia** per l'anteprima,
+**Aggiungi ai pad** per scaricarlo. MyInstants non ha un'API ufficiale documentata: l'app legge la sua
+pagina di ricerca, quindi se il sito cambia struttura la ricerca potrebbe smettere di funzionare fino
+a un aggiornamento. Molti suoni sono estratti da film, serie e canzoni: usali per divertimento personale.
+
+![MyInstants](docs/myinstants.png)
+
 ## Plugin VST3
 
 - Le cartelle analizzate di default sono `C:\Program Files\Common Files\VST3` e quella `(x86)`; puoi aggiungerne altre in Impostazioni.
@@ -69,7 +91,7 @@ Lo stesso vale per qualsiasi altro programma: basta scegliere «CABLE Output» c
 
 ## Impostazioni e latenza
 
-Le impostazioni (dispositivi, cartella, volumi, mixer e stato dei plugin) sono salvate in
+Le impostazioni (dispositivi, cartella, pad e pagine, volumi, mixer e stato dei plugin) sono salvate in
 `%APPDATA%\SoundboardVST\config.json`.
 
 Se senti crepitii o la barra di stato mostra molti *dropout*, aumenta il **Buffer** (1024 campioni);
@@ -79,8 +101,10 @@ se vuoi meno latenza prova 256. 48000 Hz è la frequenza usata da Discord.
 
 ```
 src/soundboard_vst/
-  app.py                 finestra principale
+  app.py                 finestra principale (tab Soundboard e Mixer)
   config.py              impostazioni persistenti
+  pads.py                pagine e slot dei pad
+  myinstants.py          ricerca e download da myinstants.com
   audio/engine.py        motore audio: stream, mix, routing
   audio/mixer.py         canale del mixer (inserti, fader, mute, meter)
   audio/plugins.py       inserti: effetti integrati e VST3

@@ -59,6 +59,7 @@ QLineEdit, QComboBox, QSpinBox, QKeySequenceEdit {{
     selection-background-color: {ACCENT};
     selection-color: #1b1406;
 }}
+QComboBox::drop-down {{ border: none; width: 18px; }}
 QComboBox QAbstractItemView {{ background: {PANEL_2}; border: 1px solid {BORDER}; selection-background-color: {BORDER}; }}
 
 QListWidget {{
@@ -104,4 +105,23 @@ QScrollBar::handle:horizontal {{ background: {BORDER}; border-radius: 5px; min-w
 QGroupBox {{ border: 1px solid {BORDER}; border-radius: 8px; margin-top: 14px; padding: 10px; }}
 QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 4px; color: {MUTED}; }}
 QDialog {{ background: {BG}; }}
+
+QTabWidget#mainTabs::pane {{ border: none; }}
+QTabWidget#mainTabs > QTabBar::tab {{
+    background: transparent; color: {MUTED}; padding: 8px 18px; margin-right: 4px;
+    border: none; border-bottom: 2px solid transparent; font-size: 11pt; font-weight: 600;
+}}
+QTabWidget#mainTabs > QTabBar::tab:selected {{ color: {TEXT}; border-bottom: 2px solid {ACCENT}; }}
+QTabWidget#mainTabs > QTabBar::tab:hover {{ color: {TEXT}; }}
+
+QTabBar#pages::tab {{
+    background: {BG}; color: {MUTED}; border: 1px solid {BORDER}; border-radius: 6px;
+    padding: 4px 12px; margin-right: 4px;
+}}
+QTabBar#pages::tab:selected {{ background: {PANEL_2}; color: {TEXT}; border-color: {ACCENT}; }}
+
+QListWidget#library {{ background: {BG}; border: 1px solid {BORDER}; border-radius: 6px; }}
+QListWidget#library::item {{ padding: 5px 8px; border-radius: 4px; }}
+QListWidget#library::item:selected {{ background: {PANEL_2}; color: {TEXT}; }}
+QListWidget#library::item:hover {{ background: {PANEL_2}; }}
 """

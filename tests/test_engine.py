@@ -122,3 +122,14 @@ def test_broken_plugin_is_bypassed():
     slot = InsertSlot(Boom(), "builtin", type_name="Gain")
     x = np.ones((2, N), np.float32)
     assert slot.process(x, SR) is x and slot.failed
+
+
+def test_preview_only_in_monitor():
+    eng = AudioEngine(SR, N)
+    for s in eng.strips:
+        s.gain_db, s._current_gain = 0.0, 1.0
+    eng.monitor_hear_sounds = False
+    eng.play("p", np.full((2, N), 0.2, np.float32), preview=True)
+    master, monitor = eng.render(N)
+    assert not master.any()
+    np.testing.assert_allclose(monitor, 0.2, atol=1e-6)
