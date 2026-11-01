@@ -19,7 +19,12 @@ def selftest() -> int:
     assert out.shape == (2, 512)
     import sounddevice  # PortAudio deve essere incluso
 
-    print("sounddevice", sounddevice.__version__, "devices:", len(devices.list_devices()))
+    from soundboard_vst import midi
+
+    if sys.platform == "win32":
+        assert midi.available(), f"MIDI non incluso: {midi.unavailable_reason()}"
+    print("sounddevice", sounddevice.__version__, "devices:", len(devices.list_devices()),
+          "midi:", midi.available())
     return 0
 
 

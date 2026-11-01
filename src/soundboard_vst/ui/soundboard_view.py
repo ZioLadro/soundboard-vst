@@ -12,52 +12,22 @@ from PySide6.QtGui import (
     QColor, QDesktopServices, QDrag, QFont, QKeySequence, QPainter, QPen, QShortcut,
 )
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-    QFormLayout, QFrame, QGridLayout, QHBoxLayout, QInputDialog, QKeySequenceEdit, QLabel,
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog,
+    QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPushButton, QSizePolicy,
-    QSlider, QSplitter, QTabBar, QToolButton, QVBoxLayout, QWidget,
+    QSplitter, QTabBar, QToolButton, QVBoxLayout, QWidget,
 )
 
 from ..audio.library import SUPPORTED_EXTENSIONS, SoundCache, list_sounds
 from ..config import Config
 from ..pads import MAX_SIZE, MIN_SIZE, PadLayout
+from .. import midi
 from . import theme
+from .sound_dialog import MidiBridge, SoundSettingsDialog, text_color_for
 
 MIME_KEY = "application/x-soundboard-key"
 MIME_PAD = "application/x-soundboard-pad"
 KEY_ROLE = Qt.ItemDataRole.UserRole + 1
-
-
-class SoundSettingsDialog(QDialog):
-    def __init__(self, name: str, volume: float, shortcut: str, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(f"Impostazioni — {name}")
-        self.volume = QSlider(Qt.Orientation.Horizontal)
-        self.volume.setRange(0, 200)
-        self.volume.setValue(int(volume * 100))
-        vol_label = QLabel(f"{int(volume * 100)}%")
-        self.volume.valueChanged.connect(lambda v: vol_label.setText(f"{v}%"))
-        vrow = QHBoxLayout()
-        vrow.addWidget(self.volume, 1)
-        vrow.addWidget(vol_label)
-        self.shortcut = QKeySequenceEdit(QKeySequence(shortcut))
-        clear = QPushButton("Cancella")
-        clear.clicked.connect(self.shortcut.clear)
-        srow = QHBoxLayout()
-        srow.addWidget(self.shortcut, 1)
-        srow.addWidget(clear)
-        form = QFormLayout()
-        form.addRow("Volume", vrow)
-        form.addRow("Scorciatoia", srow)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        lay = QVBoxLayout(self)
-        lay.addLayout(form)
-        lay.addWidget(buttons)
-
-    def values(self) -> tuple[float, str]:
-        return self.volume.value() / 100.0, self.shortcut.keySequence().toString()
 
 
 # Pad ------------------------------------------------------------------------------
@@ -76,6 +46,9 @@ class PadButton(QWidget):
         self.shortcut = ""
         self.missing = False
         self.playing = False
+        self.color = ""
+        self.emoji = ""
+        self.midi_label = ""
         self._hover = False
         self._press_pos: QPoint | None = None
         self.setAcceptDrops(True)
@@ -84,10 +57,14 @@ class PadButton(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-    def set_sound(self, key: str | None, label: str, shortcut: str, missing: bool) -> None:
+    def set_sound(self, key: str | None, label: str, shortcut: str, missing: bool,
+                  color: str = "", emoji: str = "", midi_label: str = "") -> None:
         self.key, self.label, self.shortcut, self.missing = key, label, shortcut, missing
+        self.color, self.emoji, self.midi_label = color, emoji, midi_label
         tip = "Slot vuoto: clic o trascina qui un suono" if key is None else \
             f"{key}\nClic: riproduci · Trascina: sposta · Tasto destro: opzioni"
+        if midi_label:
+            tip += f"\nMIDI: {midi_label}"
         if missing:
             tip = f"{key}\nFile non trovato nella cartella"
         self.setToolTip(tip)
@@ -115,34 +92,63 @@ class PadButton(QWidget):
             p.setFont(f)
             p.drawText(r, Qt.AlignmentFlag.AlignCenter, "+")
             return
-        bg = QColor(theme.ACCENT) if self.playing else QColor(theme.PANEL_2)
-        if self._hover and not self.playing:
-            bg = bg.lighter(118)
-        border = QColor(theme.ACCENT) if (self._hover or self.playing) else QColor(theme.BORDER)
-        p.setPen(QPen(border, 1))
+        if self.color:
+            base = QColor(self.color)
+            if self.playing:
+                bg = base.lighter(135)
+            elif self._hover:
+                bg = base
+            else:
+                bg = base.darker(125)
+            fg = text_color_for(bg)
+            muted = QColor(fg)
+            muted.setAlphaF(0.65)
+            border = QColor(theme.TEXT) if self.playing else (base.lighter(130) if self._hover else base)
+            p.setPen(QPen(border, 2.5 if self.playing else 1))
+        else:
+            bg = QColor(theme.ACCENT) if self.playing else QColor(theme.PANEL_2)
+            if self._hover and not self.playing:
+                bg = bg.lighter(118)
+            fg = QColor("#1b1406") if self.playing else QColor(theme.TEXT)
+            muted = QColor("#5a4513") if self.playing else QColor(theme.MUTED)
+            border = QColor(theme.ACCENT) if (self._hover or self.playing) else QColor(theme.BORDER)
+            p.setPen(QPen(border, 1))
         p.setBrush(bg)
         p.drawRoundedRect(r, 9, 9)
 
         small = QFont(self.font())
         small.setPointSizeF(max(7.0, self.font().pointSizeF() - 2))
         p.setFont(small)
-        p.setPen(QColor("#5a4513") if self.playing else QColor(theme.MUTED))
+        p.setPen(muted)
         p.drawText(r.adjusted(7, 4, -7, -4), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
                    str(self.index + 1))
-        if self.shortcut:
-            p.drawText(r.adjusted(6, 0, -6, -4),
-                       Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom, self.shortcut)
+        footer = " · ".join(x for x in (self.shortcut, self.midi_label) if x)
+        if footer:
+            fm = p.fontMetrics()
+            p.drawText(r.adjusted(6, 0, -6, -4), Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
+                       fm.elidedText(footer, Qt.TextElideMode.ElideRight, int(r.width()) - 12))
+
+        content = r.adjusted(8, 12, -8, -14 if footer else -8)
+        if self.emoji:
+            esize = max(10.0, min(content.height() * 0.45, content.width() * 0.4))
+            ef = QFont(self.font())
+            ef.setPixelSize(int(esize))
+            p.setFont(ef)
+            emoji_rect = QRectF(content.left(), content.top(), content.width(), esize * 1.25)
+            p.drawText(emoji_rect, Qt.AlignmentFlag.AlignCenter, self.emoji)
+            content = content.adjusted(0, esize * 1.2, 0, 0)
 
         f = QFont(self.font())
         f.setWeight(QFont.Weight.DemiBold)
         f.setStrikeOut(self.missing)
         p.setFont(f)
-        if self.missing:
-            p.setPen(QColor(theme.DANGER))
+        p.setPen(QColor(theme.DANGER) if self.missing else fg)
+        flags = Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap
+        if self.emoji and content.height() < p.fontMetrics().height() * 2:
+            text = p.fontMetrics().elidedText(self.label, Qt.TextElideMode.ElideRight, int(content.width()))
+            p.drawText(content, Qt.AlignmentFlag.AlignCenter, text)
         else:
-            p.setPen(QColor("#1b1406") if self.playing else QColor(theme.TEXT))
-        p.drawText(r.adjusted(8, 12, -8, -14 if self.shortcut else -8),
-                   Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, self.label)
+            p.drawText(content, flags, self.label)
 
     # Mouse ------------------------------------------------------------------------
     def enterEvent(self, event):
@@ -242,6 +248,9 @@ class SoundboardView(QWidget):
         self._known: set[str] | None = None
         self._pads: list[PadButton] = []
         self._shortcuts: list[QShortcut] = []
+        self.midi_bridge: MidiBridge | None = None
+        self.midi_port = ""
+        self._learn_dialog: SoundSettingsDialog | None = None
         self.setAcceptDrops(True)
 
         # Barra cartella ---------------------------------------------------------------
@@ -438,7 +447,8 @@ class SoundboardView(QWidget):
     def _refresh_library(self) -> None:
         self.library.clear()
         for k in self._keys:
-            it = QListWidgetItem(Path(k).stem)
+            emoji = self.config.data["sounds"].get(k, {}).get("emoji", "")
+            it = QListWidgetItem(f"{emoji}  {Path(k).stem}" if emoji else Path(k).stem)
             it.setData(KEY_ROLE, k)
             on_pad = self.layout_model.contains(k)
             if not on_pad:
@@ -485,8 +495,10 @@ class SoundboardView(QWidget):
             if key is None:
                 pad.set_sound(None, "", "", False)
             else:
-                pad.set_sound(key, Path(key).stem, sounds_cfg.get(key, {}).get("shortcut", ""),
-                              key not in existing)
+                cfg = sounds_cfg.get(key, {})
+                pad.set_sound(key, Path(key).stem, cfg.get("shortcut", ""), key not in existing,
+                              cfg.get("color", ""), cfg.get("emoji", ""),
+                              midi.binding_label(cfg.get("midi")))
 
     def _on_grid_size(self) -> None:
         self.layout_model.resize(self.rows_spin.currentData(), self.cols_spin.currentData())
@@ -609,7 +621,7 @@ class SoundboardView(QWidget):
         else:
             m.addAction("▶  Riproduci", lambda: self.play_key(key))
             m.addAction("Cambia suono…", lambda: self._choose_for_pad(index))
-            m.addAction("Volume e scorciatoia…", lambda: self._edit_settings(key))
+            m.addAction("Volume, colore e MIDI…", lambda: self._edit_settings(key))
             m.addAction("Togli dal pad", lambda: self._clear_pad(index))
             m.addSeparator()
             if key in self._keys:
@@ -631,7 +643,7 @@ class SoundboardView(QWidget):
             path = self.path_for(key)
             m.addAction("▶  Riproduci", lambda: self.play_key(key))
             m.addAction("Metti nel primo pad libero", lambda: self.place_on_pad(key))
-            m.addAction("Volume e scorciatoia…", lambda: self._edit_settings(key))
+            m.addAction("Volume, colore e MIDI…", lambda: self._edit_settings(key))
             m.addAction("Rinomina…", lambda: self._rename(path))
             m.addSeparator()
             m.addAction("Sposta nel cestino", lambda: self._trash(path))
@@ -736,12 +748,34 @@ class SoundboardView(QWidget):
     # Gestione file -------------------------------------------------------------------
     def _edit_settings(self, key: str) -> None:
         s = self.config.sound_settings(key)
-        dlg = SoundSettingsDialog(Path(key).stem, s.get("volume", 1.0), s.get("shortcut", ""), self)
-        if dlg.exec():
-            s["volume"], s["shortcut"] = dlg.values()
+        dlg = SoundSettingsDialog(Path(key).stem, s, self.midi_bridge, self.midi_port, self)
+        self._learn_dialog = dlg
+        try:
+            ok = dlg.exec()
+        finally:
+            self._learn_dialog = None
+        if ok:
+            vals = dlg.values()
+            if vals["midi"]:   # una nota MIDI suona un solo suono
+                for other, cfg in self.config.data["sounds"].items():
+                    if other != key and midi.matches(cfg.get("midi"), midi.MidiEvent(
+                            vals["midi"]["type"], vals["midi"]["channel"], vals["midi"]["number"], 1)):
+                        cfg["midi"] = None
+            s.update(vals)
             self._refresh_pads()
+            self._refresh_library()
             self._rebuild_shortcuts()
             self.changed.emit()
+
+    @property
+    def is_learning(self) -> bool:
+        return self._learn_dialog is not None and self._learn_dialog.learning
+
+    def key_for_midi(self, event) -> str | None:
+        for key, cfg in self.config.data["sounds"].items():
+            if midi.matches(cfg.get("midi"), event):
+                return key
+        return None
 
     def _rename(self, path: Path) -> None:
         new, ok = QInputDialog.getText(self, "Rinomina", "Nuovo nome:", text=path.stem)

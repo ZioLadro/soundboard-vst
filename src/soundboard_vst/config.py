@@ -68,6 +68,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "vst3_dirs": [],             # vuoto = cartelle standard
     "overlap_sounds": True,
+    "midi": {"input": "", "velocity": False},
     "sounds": {},                # nome file -> {"volume": float, "shortcut": str}
     "mixer": {},                 # id canale -> stato (fader, mute, inserti...)
     "window": {},

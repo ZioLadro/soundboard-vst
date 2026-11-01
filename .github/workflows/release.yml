@@ -51,6 +51,7 @@ jobs:
           --paths app/src
           --collect-all pedalboard
           --collect-submodules soundboard_vst
+          --collect-all rtmidi
           tools/packaging/launch.py
 
       - name: Self-test dell'eseguibile

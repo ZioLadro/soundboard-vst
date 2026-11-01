@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from . import APP_NAME, __version__
+from . import APP_NAME, __version__, midi
 from .audio import devices
 from .audio.engine import AudioEngine
 from .audio.library import SoundCache, decode
@@ -21,6 +21,7 @@ from .ui import theme
 from .ui.mixer_view import MixerView
 from .ui.myinstants_dialog import MyInstantsDialog
 from .ui.settings_dialog import SettingsDialog
+from .ui.sound_dialog import MidiBridge
 from .ui.soundboard_view import SoundboardView
 
 
@@ -101,8 +102,13 @@ class MainWindow(QMainWindow):
         if errors:
             QTimer.singleShot(300, lambda: QMessageBox.warning(
                 self, "Plugin non caricati", "Alcuni inserti non sono stati ripristinati:\n\n" + "\n".join(errors)))
+        self.midi_bridge = MidiBridge()
+        self.midi_bridge.event.connect(self._on_midi)
+        self.midi_in = midi.MidiInput()
+        self.board.midi_bridge = self.midi_bridge
         if autostart:
             QTimer.singleShot(0, self.first_start)
+            QTimer.singleShot(0, self.open_midi)
 
     # Audio --------------------------------------------------------------------------
     def first_start(self) -> None:
@@ -176,7 +182,7 @@ class MainWindow(QMainWindow):
     def _show_status(self, text: str) -> None:
         self.route_label.setText(text)
 
-    def play_sound(self, key: str, path: Path) -> None:
+    def play_sound(self, key: str, path: Path, scale: float = 1.0) -> None:
         if not self.engine.status.running:
             self.statusBar().showMessage("Audio fermo: premi «Avvia audio».", 4000)
         try:
@@ -185,7 +191,40 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Suono", f"Impossibile leggere {path.name}:\n{exc}")
             return
         vol = float(self.config.data["sounds"].get(key, {}).get("volume", 1.0))
-        self.engine.play(key, data, vol, overlap=self.board.overlap.isChecked())
+        self.engine.play(key, data, vol * scale, overlap=self.board.overlap.isChecked())
+
+    # MIDI ----------------------------------------------------------------------------
+    def open_midi(self) -> None:
+        name = self.config.data["midi"].get("input", "")
+        self.midi_in.close()
+        self.board.midi_port = ""
+        if not name:
+            return
+        if not midi.available():
+            self.statusBar().showMessage(f"MIDI non disponibile: {midi.unavailable_reason()}", 8000)
+            return
+        try:
+            ok = self.midi_in.open(name, self.midi_bridge.event.emit)
+        except Exception as exc:
+            ok = False
+            self.statusBar().showMessage(f"Errore MIDI: {exc}", 8000)
+        if ok:
+            self.board.midi_port = self.midi_in.name
+            self.statusBar().showMessage(f"Controller MIDI: {self.midi_in.name}", 5000)
+        else:
+            self.statusBar().showMessage(f"Controller MIDI non trovato: {name}", 8000)
+
+    def _on_midi(self, ev) -> None:
+        if self.board.is_learning:
+            return
+        key = self.board.key_for_midi(ev)
+        if key is None:
+            return
+        path = self.board.path_for(key)
+        if not path.exists():
+            return
+        scale = ev.value / 127.0 if self.config.data["midi"].get("velocity") else 1.0
+        self.play_sound(key, path, scale)
 
     # MyInstants -------------------------------------------------------------------------
     def open_myinstants(self) -> None:
@@ -233,6 +272,7 @@ class MainWindow(QMainWindow):
             self.config.save()
             self._vst_cache = None
             self.start_audio()
+            self.open_midi()
 
     def schedule_save(self) -> None:
         self._save_timer.start()
@@ -269,6 +309,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         self.save()
         self.engine.stop()
+        self.midi_in.close()
         super().closeEvent(event)
 
 

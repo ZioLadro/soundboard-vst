@@ -13,7 +13,8 @@ la tua voce **più** i suoni, già mixati ed elaborati.
   - **Libreria** a sinistra con tutti i file della cartella (`wav`, `mp3`, `ogg`, `flac`, `aif/aiff`): trascina un suono su un pad per assegnarlo; i file che non sono su nessun pad appaiono in grigio.
   - Trascina un pad su un altro per spostarli o scambiarli; clic su uno slot vuoto per assegnargli un suono.
   - Cartella predefinita `Musica\Suoni`, oppure una a scelta. I file nuovi (aggiunti, trascinati dall'esplora risorse o scaricati) finiscono nel primo pad libero.
-  - Tasto destro su un pad: volume (0–200%), scorciatoia da tastiera, togli dal pad, rinomina, sposta nel cestino.
+  - Tasto destro su un pad → *Volume, colore e MIDI…*: volume (0–200%), **colore** del pad (12 colori o uno a scelta), **icona emoji**, scorciatoia da tastiera e **nota MIDI**. Dallo stesso menu: togli dal pad, rinomina, sposta nel cestino.
+- **Controller MIDI**: scegli il controller in Impostazioni → MIDI, poi su un suono premi **Impara** e suona una nota o un pad (note e controlli CC, con il canale). Opzionalmente la forza con cui premi (velocity) regola il volume.
   - «Sovrapponi» per far suonare lo stesso suono più volte insieme, «Stop tutto» per zittire tutto.
 - **Ricerca su [MyInstants](https://www.myinstants.com)** direttamente dall'app: cerca o sfoglia le tendenze, ascolta l'anteprima solo in cuffia (non arriva a Discord), e aggiungi il suono con un clic: viene scaricato nella cartella e messo su un pad.
 - **Ingresso**: scegli microfono o scheda audio.
@@ -91,6 +92,16 @@ Succede quando l'audio di Discord rientra nel cavo virtuale e torna nel microfon
 
 La soundboard riconosce i casi 2, 3 e 4 e mostra un avviso quando avvii l'audio.
 
+## MIDI
+
+1. Collega il controller e aprilo in **Impostazioni → MIDI → Controller**.
+2. Tasto destro su un pad → **Volume, colore e MIDI…** → **Impara**, poi premi la nota o il pad sul controller.
+3. Sul pad compare la nota assegnata (es. `C2 · ch 10`); una nota suona un solo suono, quindi assegnarla a un altro la toglie dal precedente.
+
+Le note seguono la convenzione con il Do centrale = C4 (nota 60); alcuni programmi la chiamano C3.
+L'eseguibile della release include già il supporto MIDI. Da sorgente serve `python-rtmidi`, che su Windows ha
+pacchetti pronti fino a Python 3.12: con versioni più recenti la soundboard funziona ma senza MIDI.
+
 ## Cercare suoni su MyInstants
 
 Premi **Cerca su MyInstants** nella tab Soundboard, scrivi cosa cerchi e premi Invio (oppure
@@ -125,6 +136,7 @@ src/soundboard_vst/
   config.py              impostazioni persistenti
   pads.py                pagine e slot dei pad
   myinstants.py          ricerca e download da myinstants.com
+  midi.py                ingresso MIDI (python-rtmidi)
   audio/engine.py        motore audio: stream, mix, routing
   audio/mixer.py         canale del mixer (inserti, fader, mute, meter)
   audio/plugins.py       inserti: effetti integrati e VST3
@@ -146,4 +158,5 @@ esistente: *Actions → Build release → Run workflow* e indica il tag.
 ## Dipendenze
 
 [PySide6](https://doc.qt.io/qtforpython-6/) (interfaccia), [sounddevice](https://python-sounddevice.readthedocs.io/) (audio),
-[pedalboard](https://github.com/spotify/pedalboard) (VST3, effetti, decodifica audio), [NumPy](https://numpy.org/).
+[pedalboard](https://github.com/spotify/pedalboard) (VST3, effetti, decodifica audio), [NumPy](https://numpy.org/),
+[python-rtmidi](https://github.com/SpotlightKid/python-rtmidi) (MIDI).

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "soundboard-vst"
-version = "0.1.1"
+version = "0.2.0"
 description = "Soundboard stile Discord con mixer, host VST3 e uscita verso un microfono virtuale"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,6 +13,7 @@ dependencies = [
     "sounddevice>=0.4.6",
     "pedalboard>=0.9.10",
     "numpy>=1.26",
+    "python-rtmidi>=1.5.8; platform_system != 'Linux' and python_version < '3.13'",
 ]
 
 [project.optional-dependencies]

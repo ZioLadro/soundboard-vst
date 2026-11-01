@@ -5,10 +5,11 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
     QLabel, QListWidget, QPushButton, QVBoxLayout,
 )
 
+from .. import midi
 from ..audio import devices
 from ..config import Config, default_vst3_dirs
 from . import theme
@@ -77,6 +78,31 @@ class SettingsDialog(QDialog):
             warn.setStyleSheet(f"color: {theme.DANGER};")
             form.addRow(warn)
 
+        # MIDI ---------------------------------------------------------------------
+        midi_box = QGroupBox("MIDI")
+        mform = QFormLayout(midi_box)
+        self.midi_port = QComboBox()
+        midi_refresh = QPushButton("Aggiorna")
+        midi_refresh.clicked.connect(self._fill_midi)
+        mrow = QHBoxLayout()
+        mrow.addWidget(self.midi_port, 1)
+        mrow.addWidget(midi_refresh)
+        mform.addRow("Controller", mrow)
+        self.midi_velocity = QCheckBox("La forza con cui premi (velocity) regola il volume")
+        self.midi_velocity.setChecked(bool(config.data["midi"].get("velocity", False)))
+        mform.addRow(self.midi_velocity)
+        midi_hint = QLabel("Assegna una nota a un suono: tasto destro sul pad → Volume, colore e MIDI… → Impara.")
+        midi_hint.setWordWrap(True)
+        midi_hint.setStyleSheet(f"color: {theme.MUTED};")
+        mform.addRow(midi_hint)
+        if not midi.available():
+            warn = QLabel(f"MIDI non disponibile (manca python-rtmidi): {midi.unavailable_reason()}")
+            warn.setWordWrap(True)
+            warn.setStyleSheet(f"color: {theme.DANGER};")
+            mform.addRow(warn)
+            self.midi_port.setEnabled(False)
+            midi_refresh.setEnabled(False)
+
         # VST3 ---------------------------------------------------------------------
         vst_box = QGroupBox("Cartelle plugin VST3")
         self.vst_dirs = QListWidget()
@@ -103,10 +129,24 @@ class SettingsDialog(QDialog):
 
         lay = QVBoxLayout(self)
         lay.addWidget(audio_box)
+        lay.addWidget(midi_box)
         lay.addWidget(vst_box)
         lay.addWidget(buttons)
 
         self._fill_host_apis()
+        self._fill_midi()
+
+    def _fill_midi(self) -> None:
+        current = self.midi_port.currentData() if self.midi_port.count() else \
+            self.config.data["midi"].get("input", "")
+        self.midi_port.clear()
+        self.midi_port.addItem(NONE_LABEL, "")
+        ports = midi.MidiInput.ports()
+        for name in ports:
+            self.midi_port.addItem(name, name)
+        if current and current not in ports:
+            self.midi_port.addItem(f"{current} (non collegato)", current)
+        self.midi_port.setCurrentIndex(max(0, self.midi_port.findData(current)))
 
     # Dispositivi ----------------------------------------------------------------
     def _fill_host_apis(self) -> None:
@@ -169,6 +209,8 @@ class SettingsDialog(QDialog):
         a["monitor_output"] = self.monitor.currentData() or ""
         a["sample_rate"] = int(self.sample_rate.currentData())
         a["block_size"] = int(self.block.currentData())
+        self.config.data["midi"] = {"input": self.midi_port.currentData() or "",
+                                    "velocity": self.midi_velocity.isChecked()}
         dirs = [self.vst_dirs.item(i).text() for i in range(self.vst_dirs.count())]
         self.config.data["vst3_dirs"] = [] if dirs == default_vst3_dirs() else dirs
         self.accept()

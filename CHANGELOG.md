@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.0 — 2026-11-02
+
+### Novità
+- Colore per ogni pad: 12 colori pronti o uno a scelta; il pad in riproduzione si illumina.
+- Icona emoji per ogni suono, mostrata sul pad e nella libreria (selezione rapida o `Win + .`).
+- Controller MIDI: scelta del controller nelle impostazioni, «Impara» per assegnare una nota o un CC
+  (con canale) a ogni suono, velocity opzionale come volume. La nota assegnata è mostrata sul pad.
+- L'eseguibile include python-rtmidi e il self-test della build verifica che il MIDI sia disponibile.
+
 ## v0.1.1 — 2026-11-02
 
 ### Correzioni
