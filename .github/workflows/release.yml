@@ -1,0 +1,72 @@
+name: Build release
+
+# Costruisce SoundboardVST.exe per Windows e lo allega alla release.
+# - Parte da sola quando pubblichi una release su GitHub.
+# - Si può lanciare a mano (Actions → Build release → Run workflow) per una release già esistente.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag della release da compilare (es. v0.1.0)"
+        required: true
+        default: "v0.1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: Script di build (dal ramo del workflow)
+        uses: actions/checkout@v4
+        with:
+          path: tools
+
+      - name: Codice della release
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          path: app
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: app/requirements.txt
+
+      - name: Dipendenze
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r app/requirements.txt pyinstaller
+
+      - name: PyInstaller
+        run: >
+          pyinstaller --noconfirm --clean --windowed
+          --name SoundboardVST
+          --paths app/src
+          --collect-all pedalboard
+          --collect-submodules soundboard_vst
+          tools/packaging/launch.py
+
+      - name: Self-test dell'eseguibile
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist/SoundboardVST/SoundboardVST.exe" -ArgumentList "--selftest" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Self-test fallito (codice $($p.ExitCode))" }
+
+      - name: Archivio zip
+        shell: pwsh
+        run: |
+          Copy-Item app/README.md, app/CHANGELOG.md dist/SoundboardVST/
+          Compress-Archive -Path dist/SoundboardVST -DestinationPath "SoundboardVST-$env:TAG-windows-x64.zip"
+
+      - name: Allega alla release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          files: SoundboardVST-${{ env.TAG }}-windows-x64.zip

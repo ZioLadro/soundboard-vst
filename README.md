@@ -37,6 +37,14 @@ Suoni ──────► [Soundboard: inserti → fader] ─┘
 
 ## Installazione (Windows)
 
+### Versione pronta
+
+Scarica `SoundboardVST-…-windows-x64.zip` dall'ultima [release](https://github.com/ZioLadro/soundboard-vst/releases),
+estrailo e avvia `SoundboardVST.exe`: non serve installare Python. Windows SmartScreen potrebbe
+avvisare perché l'eseguibile non è firmato: «Ulteriori informazioni» → «Esegui comunque».
+
+### Da sorgente
+
 1. Installa **Python 3.10 o superiore** da [python.org](https://www.python.org/downloads/) (spunta «Add Python to PATH»).
 2. Installa un cavo audio virtuale, ad esempio **[VB-Audio Virtual Cable](https://vb-audio.com/Cable/)** (gratuito), e riavvia il PC.
 3. Scarica questo repository ed esegui `run_windows.bat`: la prima volta crea un ambiente virtuale e installa le dipendenze.
@@ -116,6 +124,12 @@ tests/                   test del motore e della libreria
 ```
 
 Test: `pip install pytest` e poi `pytest`.
+
+## Release
+
+Pubblicando una release su GitHub (tag `vX.Y.Z`) la GitHub Action `Build release` compila
+l'eseguibile Windows con PyInstaller, lo verifica e allega lo zip alla release. Per una release già
+esistente: *Actions → Build release → Run workflow* e indica il tag.
 
 ## Dipendenze
 
