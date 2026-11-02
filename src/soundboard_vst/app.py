@@ -364,6 +364,7 @@ class MainWindow(QMainWindow):
         except ValueError:
             owner = 0
         self.bot.continuous = bool(dc.get("continuous", True))
+        self.bot.show_presence = bool(dc.get("presence", True))
         self.bot.commands_cfg = dict(dc.get("commands", {}))
         try:
             self.bot.board_channel = int(dc.get("board_channel") or 0)
@@ -676,6 +677,7 @@ class MainWindow(QMainWindow):
             else:
                 self.bot.follow = dc.get("follow", True)
                 self.bot.continuous = bool(dc.get("continuous", True))
+                self.bot.show_presence = bool(dc.get("presence", True))   # il bot lo applica entro pochi secondi
                 self._update_exclusive()
                 if dc.get("commands") != old_bot.get("commands"):
                     was_enabled = bool(self.bot.commands_cfg.get("enabled", True))

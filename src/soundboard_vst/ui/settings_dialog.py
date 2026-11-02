@@ -192,6 +192,10 @@ class SettingsDialog(QDialog):
             "Il bot resta sempre in trasmissione (silenzio quando non suona niente): i suoni partono prima,\n"
             "ma su Discord il bot può risultare sempre «attivo». Senza, va in pausa dopo mezzo secondo di silenzio.")
         self.bot_continuous.setChecked(bool(dc.get("continuous", True)))
+        self.bot_presence = QCheckBox("Mostra nello stato del bot cosa suona il player («Ascolta …»)")
+        self.bot_presence.setToolTip("Mentre il player suona, il bot su Discord mostra il titolo del brano.\n"
+                                     "Discord permette di cambiarlo al massimo ogni 15 secondi circa.")
+        self.bot_presence.setChecked(bool(dc.get("presence", True)))
         sc = dc.get("shortcuts", {})
         self.bot_keys: dict[str, QKeySequenceEdit] = {}
         for name, label in (("toggle", "Avvia / ferma bot"), ("join", "Entra nel mio canale"),
@@ -204,7 +208,7 @@ class SettingsDialog(QDialog):
             kclear.clicked.connect(edit.clear)
             krow.addWidget(kclear)
             bform.addRow(f"Tasto: {label}", krow)
-        for cb in (self.bot_autostart, self.bot_follow, self.bot_exclusive, self.bot_continuous):
+        for cb in (self.bot_autostart, self.bot_follow, self.bot_exclusive, self.bot_continuous, self.bot_presence):
             bform.addRow(cb)
 
         cm = dc.get("commands", {})
@@ -611,6 +615,7 @@ class SettingsDialog(QDialog):
             "follow": self.bot_follow.isChecked(),
             "exclusive": self.bot_exclusive.isChecked(),
             "continuous": self.bot_continuous.isChecked(),
+            "presence": self.bot_presence.isChecked(),
             "shortcuts": {k: e.keySequence().toString() for k, e in self.bot_keys.items()},
             "commands": {
                 "enabled": self.cmd_enabled.isChecked(),

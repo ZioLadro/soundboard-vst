@@ -135,6 +135,7 @@ Note:
   dalla rete e da Discord). Su Discord il bot può però risultare sempre «attivo». Disattivandola, il bot va in pausa
   dopo mezzo secondo di silenzio e riparte alla pressione successiva (circa 40 ms interni, più l'avvio lato Discord).
   Il menu 🤖 mostra l'ultima latenza interna misurata.
+- **Stato del bot**: mentre il player suona, il bot su Discord mostra «Ascolta *titolo*»; in pausa o fermo lo stato sparisce (si disattiva in Impostazioni → Bot Discord). Discord concede ai bot solo questa riga di testo, non la Rich Presence completa con copertina e avanzamento, e permette di cambiarla al massimo ogni 15 secondi circa: un cambio di brano può comparire con qualche secondo di ritardo.
 - Usa discord.py 2.7 con il supporto alla crittografia end-to-end della voce (DAVE), obbligatoria su Discord.
 - Il token è salvato in chiaro in `%APPDATA%\SoundboardVST\config.json`: chi lo ha può controllare il bot, quindi non condividere quel file. Se il token esce per sbaglio, rigeneralo dal portale.
 
