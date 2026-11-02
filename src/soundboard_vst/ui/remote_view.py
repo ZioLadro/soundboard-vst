@@ -11,7 +11,8 @@ from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
 )
 
-from .. import discord_bot, youtube
+from .. import discord_bot, eventlog, importer, youtube
+from ..eventlog import acting
 from ..remote.server import RemoteServer, is_tailscale, local_addresses, new_token
 from . import theme
 
@@ -135,6 +136,13 @@ class RemoteController(QObject):
 
     # Comandi --------------------------------------------------------------------------------
     def _run(self, c: dict) -> None:
+        """Esegue un comando del telefono (``by`` assente) o del bot Discord (``by`` = utente)."""
+        who = str(c.get("by") or "Telefono")[:80]
+        with acting(who):
+            self._execute(c)
+        self._snapshot()
+
+    def _execute(self, c: dict) -> None:
         w = self.w
         cmd = c.get("cmd")
         try:
@@ -146,24 +154,52 @@ class RemoteController(QObject):
                 key = str(c.get("key", ""))
                 if w.board.exists(key):          # solo file della cartella o frasi esistenti
                     w.board.play_key(key, quiet=True)
+            elif cmd == "import_sound":
+                done = c.get("_done") if callable(c.get("_done")) else None
+                local = bool(c.get("local"))
+                source = str(c.get("source", ""))[:1000]
+                if local and not importer.is_incoming(Path(source)):
+                    return                            # file locali solo se arrivati da Discord
+                w.import_sound(source, str(c.get("name") or "")[:80], str(c.get("start") or ""),
+                               str(c.get("end") or ""), local=local, done=done, who=eventlog.current_actor())
+            elif cmd == "set_greeting":
+                done = c.get("_done") if callable(c.get("_done")) else None
+                join, leave = c.get("join"), c.get("leave")
+                for k in (join, leave):
+                    if k and not w.board.exists(k):
+                        if done:
+                            done(False, "❌ Suono non trovato nella soundboard.")
+                        return
+                entry = w.set_greeting(str(c.get("user")), str(c.get("name") or ""), join, leave)
+                describe = lambda k: f"**{w.board.display_name(k)}**" if k else "niente"
+                eventlog.log(eventlog.DISCORD, f"Suoni di {entry['name']}: entrata {w.board.display_name(entry['join']) if entry['join'] else '—'}, "
+                             f"uscita {w.board.display_name(entry['leave']) if entry['leave'] else '—'}")
+                if done:
+                    done(True, f"Fatto: quando {entry['name']} entra suona {describe(entry['join'])}, "
+                               f"quando esce {describe(entry['leave'])}.")
             elif cmd == "say":
                 text = str(c.get("text", ""))[:300]
                 if text.strip():
                     w.speak(text)
             elif cmd == "stop_sounds":
                 w.engine.stop_sounds()
+                eventlog.log(eventlog.SOUND, "■ Ferma tutti i suoni")
             elif cmd == "player":
                 self._player(c)
             elif cmd == "player_add":
                 text = str(c.get("text", ""))[:500]
                 if youtube.is_youtube_url(text) or (text and "://" not in text):
-                    w.player_view.add_from_text(text, remote=True)
+                    eventlog.log(eventlog.PLAYER, f"Chiede di aggiungere: {text}")
+                    w.player_view.add_from_text(text, remote=True, by=eventlog.current_actor())
             elif cmd == "strip":
                 strip = w.engine.strip(str(c.get("id")))
                 if "gain_db" in c:
                     strip.gain_db = max(-60.0, min(12.0, float(c["gain_db"])))
+                    if c.get("by"):                   # dal telefono arrivano tanti valori mentre si trascina
+                        eventlog.log(eventlog.DISCORD, f"Volume {strip.name}: {strip.gain_db:+.1f} dB")
                 if "mute" in c:
                     strip.mute = bool(c["mute"])
+                    eventlog.log(eventlog.SOUND, f"{'Muto' if strip.mute else 'Audio attivo'}: {strip.name}")
                 w.mixer.sync_levels()
                 w.schedule_save()
             elif cmd == "bot":
@@ -176,11 +212,14 @@ class RemoteController(QObject):
                     w.leave_bot()
         except (StopIteration, ValueError, TypeError, KeyError):
             pass      # comando malformato: ignorato
-        self._snapshot()
 
     def _player(self, c: dict) -> None:
         p = self.w.engine.player
         action = c.get("action")
+        names = {"toggle": "Play/Pausa", "stop": "Stop", "next": "Brano successivo", "prev": "Brano precedente",
+                 "play": "Riproduci dalla coda"}
+        if action in names:
+            eventlog.log(eventlog.PLAYER, names[action])
         if action == "toggle" and p.tracks:
             p.toggle()
         elif action == "stop":

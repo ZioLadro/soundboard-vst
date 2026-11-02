@@ -64,6 +64,23 @@ def selftest() -> int:
             audio = decode(out, 48000)
             assert audio.shape[1] > 4800 and abs(audio).max() > 0.01, "sintesi vocale di Windows muta"
         print("voci di sistema:", len(voices), voices[0].id)
+    # import di nuovi suoni: conversione vera con l'ffmpeg incluso (mp3, altrimenti ogg o wav)
+    import wave
+
+    from soundboard_vst import importer
+    from soundboard_vst.audio.library import decode as _decode
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "sorgente.wav"
+        with wave.open(str(src), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(44100)
+            w.writeframes((np.sin(np.arange(44100) / 9) * 12000).astype("<i2").tobytes())
+        out, _ = importer.convert(src, Path(tmp) / "Suoni", "prova", 0.25, 0.75)
+        audio = _decode(out, 48000)
+        assert abs(audio.shape[1] / 48000 - 0.5) < 0.08, f"import: durata sbagliata ({out.name})"
+        print("import:", out.suffix)
     from aiohttp import web  # noqa: F401  server del controllo remoto
     from soundboard_vst.remote.server import RemoteServer  # noqa: F401
 

@@ -2,9 +2,11 @@
 
 Flusso del segnale::
 
-    Microfono ──► [Canale Microfono] ──┐
-                                       ├──► [Master → Discord] ──► uscita virtuale (VB-Cable)
-    Suoni ──────► [Canale Soundboard] ─┘
+    Microfono ──► [Canale Microfono] ──────┐
+                                           ├──► [Master → Discord] ──► uscita virtuale (VB-Cable)
+    Suoni ──────► [Canale Soundboard] ─────┤
+    Frasi TTS ──► [Canale Sintesi vocale] ─┤
+    Player ─────► [Canale Player] ─────────┘
                         │      │
                         └──────┴──(selezionabili)──► [Monitor] ──► cuffie
 
@@ -42,6 +44,7 @@ class Voice:
     pos: int = 0
     loop: bool = False
     preview: bool = False   # anteprima: solo in cuffia, non arriva a Discord
+    strip: str = "sounds"   # canale del mixer: "sounds" o "tts" (sintesi vocale)
 
     @property
     def done(self) -> bool:
@@ -62,6 +65,8 @@ class AudioEngine:
 
         self.mic = ChannelStrip("mic", "Microfono")
         self.sounds = ChannelStrip("sounds", "Soundboard", gain_db=-6.0)
+        self.tts = ChannelStrip("tts", "Sintesi vocale", gain_db=-3.0)
+        self.monitor_hear_tts = True
         self.player_strip = ChannelStrip("player", "Player", gain_db=-12.0)
         self.player = Player(sample_rate)
         self.monitor_hear_player = True
@@ -93,18 +98,19 @@ class AudioEngine:
 
     @property
     def strips(self) -> list[ChannelStrip]:
-        return [self.mic, self.sounds, self.player_strip, self.master, self.monitor]
+        return [self.mic, self.sounds, self.tts, self.player_strip, self.master, self.monitor]
 
     def strip(self, strip_id: str) -> ChannelStrip:
         return next(s for s in self.strips if s.id == strip_id)
 
     # Suoni -------------------------------------------------------------------
     def play(self, key: str, data: np.ndarray, gain: float = 1.0, overlap: bool = True,
-             preview: bool = False) -> None:
+             preview: bool = False, strip: str = "sounds") -> None:
         with self._voices_lock:
             if not overlap or preview:
                 self._voices = [v for v in self._voices if v.key != key]
-            self._voices.append(Voice(key, data, gain, preview=preview))
+            self._voices.append(Voice(key, data, gain, preview=preview,
+                                      strip="tts" if strip == "tts" else "sounds"))
 
     def stop_sounds(self, key: str | None = None) -> None:
         with self._voices_lock:
@@ -120,15 +126,17 @@ class AudioEngine:
         with self._voices_lock:
             return {v.key for v in self._voices}
 
-    def _mix_voices(self, frames: int) -> tuple[np.ndarray, np.ndarray]:
+    def _mix_voices(self, frames: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """(suoni, anteprime solo cuffia, sintesi vocale)."""
         main = np.zeros((2, frames), dtype=np.float32)
         prev = np.zeros((2, frames), dtype=np.float32)
+        speech = np.zeros((2, frames), dtype=np.float32)
         with self._voices_lock:
             voices = list(self._voices)
         if not voices:
-            return main, prev
+            return main, prev, speech
         for v in voices:
-            out = prev if v.preview else main
+            out = prev if v.preview else speech if v.strip == "tts" else main
             n_total = v.data.shape[1]
             written = 0
             while written < frames and (v.pos < n_total or v.loop):
@@ -140,7 +148,7 @@ class AudioEngine:
                 written += n
         with self._voices_lock:
             self._voices = [v for v in self._voices if not v.done]
-        return main, prev
+        return main, prev, speech
 
     # Rendering (thread audio) ------------------------------------------------
     def render(self, frames: int, mic_block: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
@@ -151,16 +159,19 @@ class AudioEngine:
                 else np.zeros((2, frames), dtype=np.float32)
 
         mic = self.mic.process(mic_block, sr)
-        voices, preview = self._mix_voices(frames)
+        voices, preview, speech = self._mix_voices(frames)
         snd = self.sounds.process(voices, sr)
+        say = self.tts.process(speech, sr)
         ply = self.player_strip.process(self.player.read(frames), sr)
         if self.bot_streaming:
-            self.bot_ring.write(snd + ply)
-        master = self.master.process(mic + snd + ply if self.sounds_to_master else mic, sr)
+            self.bot_ring.write(snd + say + ply)
+        master = self.master.process(mic + snd + say + ply if self.sounds_to_master else mic, sr)
 
         mon_in = np.zeros((2, frames), dtype=np.float32)
         if self.monitor_hear_sounds:
             mon_in += snd
+        if self.monitor_hear_tts:
+            mon_in += say
         if self.monitor_hear_player:
             mon_in += ply
         if self.monitor_hear_mic:
@@ -309,6 +320,7 @@ class AudioEngine:
         d["monitor"]["hear_sounds"] = self.monitor_hear_sounds
         d["monitor"]["hear_mic"] = self.monitor_hear_mic
         d["monitor"]["hear_player"] = self.monitor_hear_player
+        d["monitor"]["hear_tts"] = self.monitor_hear_tts
         return d
 
     def load_dict(self, d: dict) -> list[str]:
@@ -320,6 +332,7 @@ class AudioEngine:
         self.monitor_hear_sounds = bool(mon.get("hear_sounds", True))
         self.monitor_hear_mic = bool(mon.get("hear_mic", False))
         self.monitor_hear_player = bool(mon.get("hear_player", True))
+        self.monitor_hear_tts = bool(mon.get("hear_tts", True))
         return errors
 
 

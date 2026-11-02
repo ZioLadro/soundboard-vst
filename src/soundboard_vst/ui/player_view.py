@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import eventlog
 from .. import youtube
 from ..audio.mixer import MAX_DB, MIN_DB
 from ..audio.player import AUDIO_EXTENSIONS, Player, Track, format_time, probe_duration, read_m3u, write_m3u
@@ -49,11 +50,12 @@ class PlayerView(QWidget):
         self._bridge = _Bridge()
         self._bridge.player_event.connect(self._on_player_event)
         self._bridge.tracks_found.connect(self._on_tracks_found)
-        self._bridge.failed.connect(lambda msg: self._set_status(msg, error=True))
+        self._bridge.failed.connect(self._on_failed)
         self._bridge.duration.connect(self._on_duration)
         player.on_change = self._bridge.player_event.emit
         player.resolvers["youtube"] = youtube.resolver
         self._request = 0
+        self._request_by = ""
         self._seeking = False
         self.last_message = ""
         self.setAcceptDrops(True)
@@ -293,16 +295,24 @@ class PlayerView(QWidget):
             return
         if event == "error":
             self._set_status(short_error(Exception(self.player.error)), error=True)
+            eventlog.log(eventlog.ERROR, f"Player: {short_error(Exception(self.player.error))}", "")
         elif event in ("track", "queue"):
             if event == "track":
                 self._set_status("")
                 self._prefetch_next()
+                cur = self.player.current
+                if cur is not None:
+                    eventlog.log(eventlog.PLAYER, f"▶ In riproduzione: {cur.title}", "")
             self.refresh()
             self.changed.emit()
         else:
             self._refresh_now()
         if self.player.state in ("playing", "loading"):
             self.started.emit()
+
+    def _on_failed(self, msg: str) -> None:
+        self._set_status(msg, error=True)
+        eventlog.log(eventlog.ERROR, msg, self._request_by or None)
 
     def _prefetch_next(self) -> None:
         """Scarica in anticipo il prossimo brano di YouTube, così parte subito."""
@@ -358,9 +368,11 @@ class PlayerView(QWidget):
         self.level_changed.emit()
 
     # Aggiunta brani --------------------------------------------------------------------
-    def add_tracks(self, tracks: list[Track], play: bool = False) -> None:
+    def add_tracks(self, tracks: list[Track], play: bool = False, by: str | None = None) -> None:
         if not tracks:
             return
+        names = ", ".join(f"«{t.title}»" for t in tracks[:3]) + (f" e altri {len(tracks) - 3}" if len(tracks) > 3 else "")
+        eventlog.log(eventlog.PLAYER, f"Aggiunge alla coda: {names}", by)
         start = len(self.player.tracks)
         self.player.add(tracks)
         for t in tracks:
@@ -381,7 +393,7 @@ class PlayerView(QWidget):
     def _submit(self) -> None:
         self.add_from_text(self.input.text())
 
-    def add_from_text(self, text: str, remote: bool = False) -> None:
+    def add_from_text(self, text: str, remote: bool = False, by: str | None = None) -> None:
         """Link YouTube (video/playlist), percorso o ricerca. Dal telefono la ricerca aggiunge il primo risultato."""
         text = text.strip()
         if not text:
@@ -396,6 +408,7 @@ class PlayerView(QWidget):
             return
         self._request += 1
         rid = self._request
+        self._request_by = by or eventlog.current_actor()   # i risultati arrivano dopo: si ricorda chi ha chiesto
         if youtube.is_youtube_url(text):
             self._set_status("Leggo il link di YouTube…")
             mode, job = "add", (lambda: youtube.resolve(text))
@@ -420,14 +433,14 @@ class PlayerView(QWidget):
             return
         if mode == "first":
             t = tracks[0]
-            self._set_status(f"Aggiunto «{t.title}» (dal telefono).")
-            self.add_tracks([t])
+            self._set_status(f"Aggiunto «{t.title}» ({self._request_by}).")
+            self.add_tracks([t], by=self._request_by)
             return
         if mode == "add":
             self.input.clear()
             self._set_status(f"Aggiunti {len(tracks)} brani da YouTube." if len(tracks) > 1
                              else f"Aggiunto «{tracks[0].title}».")
-            self.add_tracks(tracks)
+            self.add_tracks(tracks, by=self._request_by)
             return
         self._set_status(f"{len(tracks)} risultati: doppio clic per riprodurre, oppure selezionali e aggiungili.")
         self.results.clear()

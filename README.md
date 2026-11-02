@@ -23,10 +23,13 @@ la tua voce **più** i suoni, già mixati ed elaborati.
 - **Bot Discord integrato**: il bot entra nel canale vocale in cui ti trovi (e ti segue se cambi canale) e riproduce i suoni che premi, con gli effetti e il fader del canale Soundboard. Per i suoni non serve VB-Cable.
 - **Comandi e pulsantiera su Discord**: `/suona`, `/pulsantiera` (i pad come pulsanti in un messaggio), un **canale dedicato** con tutti i pad sempre aggiornati, e comandi per player, volume ed entrata/uscita del bot, con permessi per ruolo.
 - **Sintesi vocale**: scrivi una frase e la soundboard la dice (anche su Discord), con voci neurali Microsoft o voci del sistema offline; e **frasi sui pad**, che funzionano come gli altri suoni.
+- **Nuovi suoni da YouTube** (o da MyInstants, da un link o da Discord con `/aggiungi-suono`), anche solo un pezzo.
+- **Registro** di tutto quello che succede: chi preme cosa (anche dalla pulsantiera di Discord), chi aggiunge musica, comandi, entrate e uscite, errori.
+- **Suoni di entrata e uscita** per chi entra o esce dal canale vocale del bot, e **permessi** del bot per ruoli e utenti.
 - **Ingresso**: scegli microfono o scheda audio.
 - **Uscita verso Discord**: il mix va su un cavo audio virtuale, che gli altri programmi vedono come microfono.
 - **Monitor**: uscita separata per le cuffie, per sentire i suoni (e, se vuoi, te stesso).
-- **Mixer** (tab *Mixer*) con cinque canali — Microfono, Soundboard, Player, Master → Discord, Monitor — ognuno con fader in dB, mute, meter stereo e catena di inserti.
+- **Mixer** (tab *Mixer*) con sei canali — Microfono, Soundboard, Sintesi vocale, Player, Master → Discord, Monitor — ognuno con fader in dB, mute, meter stereo e catena di inserti.
 - **Host VST3**: inserisci plugin VST3 in qualsiasi canale, riordinali, mettili in bypass, apri la loro interfaccia grafica o un editor parametri generico. Lo stato dei plugin viene salvato e ripristinato.
 - **Effetti integrati** (non serve installare nulla): noise gate, compressore, limiter, filtri, EQ, riverbero, delay, chorus, distorsione, guadagno e **pitch shifter** a bassa latenza (±12 semitoni, ~20 ms).
 - **Mappa MIDI**: volumi e mute di ogni canale, controlli del player, pad della pagina corrente, cambio pagina e bot assegnabili a potenziometri, fader e tasti del controller, con preset per **Nektar Impact LX25+**.
@@ -153,20 +156,56 @@ Con il bot online, in qualsiasi canale di testo del server:
 | `/player` · `/riproduci` | Play/pausa, stop, successivo, precedente · aggiunge un link o una ricerca di YouTube |
 | `/volume canale: db:` | Volume di un canale del mixer, da −60 a +12 dB |
 | `/parla testo:` | La sintesi vocale dice la frase (fino a 300 caratteri) |
+| `/aggiungi-suono file: link: nome: inizio: fine:` | Nuovo suono da un file caricato o da un link (YouTube, MyInstants, file audio, o una ricerca); il bot dice dove l'ha messo |
+| `/mio-suono entrata: uscita: [utente:]` | Il tuo suono quando entri o esci dal canale vocale del bot («— niente —» per toglierlo); per altre persone serve il permesso «Gestione» |
 | `/aiuto` | Elenco dei comandi |
 
 Se la pulsantiera nel canale smette di aggiornarsi, il menu 🤖 dice perché («Pulsantiera nel canale: …») e ha «Aggiorna ora la pulsantiera nel canale»; il bot comunque riprova da solo. Anche il pulsante ↻ nel canale la aggiorna subito.
 
 I colori dei pulsanti seguono quelli dei pad (rosso, verde, blu o grigio: Discord ha solo questi quattro) e l'emoji compare nel testo. I pulsanti funzionano anche dopo aver riavviato la soundboard. Per il canale dedicato conviene un canale in cui solo il bot può scrivere.
 
-**Permessi** (Impostazioni → Bot Discord):
+**Permessi** (Impostazioni → **Permessi Discord**): i comandi sono divisi in cinque gruppi, ognuno aperto a **chiunque** oppure solo ai **ruoli** e agli **utenti** scelti.
 
-- *Chi può suonare*: pad, `/suona`, `/stop`, `/pulsantiera`. Predefinito: **chiunque nel server**.
-- *Chi può controllare*: `/entra`, `/esci`, player, `/riproduci`, `/volume`, `/canale-pulsantiera`. Predefinito: **solo io**.
-- Per entrambi puoi scegliere «Solo io», «Io e chi ha il ruolo indicato» (nome o ID del ruolo) o «Chiunque nel server». Il proprietario (il tuo ID utente) può sempre usare tutto.
-- Se disattivi «Comandi da Discord», il bot li toglie dai server.
+| Gruppo | Comprende | Predefinito |
+|--------|-----------|-------------|
+| Suonare | pad e pulsantiera, `/suona`, `/stop`, `/pulsantiera`, `/mio-suono` | chiunque |
+| Sintesi vocale | `/parla` | chiunque |
+| Musica | `/riproduci`, `/player`, tasti del player | solo tu |
+| Controllo del bot | `/entra`, `/esci`, `/volume` | solo tu |
+| Gestione | `/aggiungi-suono`, `/canale-pulsantiera`, suoni di entrata degli altri | solo tu |
+
+- Ruoli e utenti si scelgono da un elenco (i ruoli dei server del bot e le persone che il bot ha già visto nei canali vocali o usando i comandi) o scrivendo l'ID.
+- Gli **utenti bloccati** non possono usare niente; «Gli amministratori del server possono usare tutti i comandi» è attivo di default.
+- Tu (il tuo ID utente) puoi sempre usare tutto. In più gli amministratori possono limitare i comandi anche da Discord: *Impostazioni server → Integrazioni*.
+- Le impostazioni delle versioni precedenti («Chi può suonare/controllare» e ruolo) vengono convertite in automatico.
+- Se disattivi «Comandi da Discord» (scheda Bot Discord), il bot li toglie dai server.
+
+### Suoni di entrata e uscita
+
+Impostazioni → **Entrate e uscite**: quando qualcuno entra o esce dal canale vocale in cui c'è il bot, parte un suono (o una frase) della soundboard.
+
+- Un suono per persona, oppure quello di **«Chiunque altro»**; se non c'è un suono, si può far annunciare dalla sintesi vocale («{nome} è entrato»).
+- *Non ripetere prima di…* (30 s di default) evita la raffica quando qualcuno entra ed esce di continuo.
+- Ognuno può scegliere i propri da Discord con **`/mio-suono`**. Entrate e uscite finiscono anche nel Registro.
 
 **Bot invitato con una versione precedente**: invitalo di nuovo con «Invita il bot nel server…» (non serve toglierlo prima). Il nuovo link aggiunge i comandi e i permessi *Visualizza canale* e *Invia messaggi* per il canale dedicato. I comandi compaiono subito nei server in cui c'è il bot; se Discord non li mostra, riavvia il client Discord (Ctrl+R).
+
+## Nuovi suoni da YouTube o da un link
+
+Nella tab Soundboard premi **Da YouTube o link…** (da Discord: `/aggiungi-suono`):
+
+- **Da dove**: un link di YouTube, oppure un testo (si prende il primo risultato su YouTube), una pagina di **MyInstants** (`myinstants.com/…/instant/…`) o un link diretto a un file audio.
+- **Pezzo**: da dove a dove, es. `0:12` → `0:18` (vuoto = tutto). Si può ritoccare poi con *Personalizza…*.
+- Il suono viene convertito in **mp3** nella cartella dei suoni (senza sovrascrivere niente) e messo nel primo pad libero. Massimo 10 minuti; da Discord file fino a 25 MB.
+
+Scaricare contenuti da YouTube è contrario ai suoi termini di servizio e spesso sono protetti da diritti: usalo per uso personale.
+
+## Registro
+
+La tab **Registro** mostra tutto quello che succede, con l'ora e **chi** l'ha fatto: *Tu* (finestra e tastiera), *MIDI*, *Telefono*, oppure il nome della persona su Discord (anche quando preme un tasto della pulsantiera), *«nome (entrata)»* per i suoni di entrata.
+
+- Tipi: suoni, sintesi vocale, player (brani aggiunti e da chi, brano in riproduzione), Discord (bot, entrate e uscite), comandi Discord, permessi negati, nuovi suoni, errori.
+- Filtro per tipo, ricerca per nome o testo, *Pulisci*, e **Apri cartella dei registri**: un file di testo al giorno (`%APPDATA%\SoundboardVST\logs`), tenuto per 14 giorni.
 
 ## Inizio, fine e dissolvenze
 
@@ -180,7 +219,7 @@ Il file non viene modificato. Vale anche per le frasi della sintesi vocale (la f
 
 ## Sintesi vocale e frasi sui pad
 
-- **Al volo**: scrivi nella barra 💬 sotto i pad e premi **Invio** (o **Parla**). La frase passa dal canale *Soundboard* del mixer, quindi arriva a Discord (cavo virtuale o bot) e in cuffia come un suono. Invio di nuovo la ripete.
+- **Al volo**: scrivi nella barra 💬 sotto i pad e premi **Invio** (o **Parla**). La frase passa dal canale *Sintesi vocale* del mixer (con il suo fader, mute ed effetti), quindi arriva a Discord (cavo virtuale o bot) e in cuffia come un suono. Invio di nuovo la ripete.
 - **Sui pad**: tasto destro su un pad vuoto → **Nuova frase…**, oppure **Salva su un pad** dalla barra. Tasto destro sulla frase → *Modifica frase…* per cambiare testo o voce, *Personalizza…* per nome, colore, emoji, immagine, volume, scorciatoia e nota MIDI. Le frasi stanno anche nella libreria (💬) e si trascinano tra pad e pagine come i file.
 - **Da Discord**: `/parla testo:`; le frasi sui pad compaiono nella pulsantiera e in `/suona`. **Dal telefono**: campo «Scrivi una frase da far dire…» nella scheda Pad.
 
@@ -310,6 +349,8 @@ src/soundboard_vst/
   discord_bot.py         bot Discord (discord.py) che trasmette il canale Soundboard
   discord_commands.py    comandi slash, pulsantiera e canale dedicato del bot
   tts.py                 sintesi vocale (voci neurali e di sistema), cache delle frasi
+  importer.py            nuovi suoni da YouTube, MyInstants, link e file (ffmpeg)
+  eventlog.py            registro degli eventi (console e file giornalieri)
   audio/engine.py        motore audio: stream, mix, routing
   audio/mixer.py         canale del mixer (inserti, fader, mute, meter)
   audio/plugins.py       inserti: effetti integrati e VST3

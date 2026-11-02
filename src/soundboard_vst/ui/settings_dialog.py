@@ -12,7 +12,9 @@ from PySide6.QtWidgets import (
 from .. import discord_bot, midi, midi_map, tts
 from ..audio import devices
 from ..config import Config, default_vst3_dirs
-from ..discord_commands import ACCESS_EVERYONE, ACCESS_LABELS, ACCESS_OWNER, ACCESS_ROLE
+from ..discord_bot import normalize_greetings
+from ..discord_commands import normalize_permissions
+from .discord_settings import GreetingsEditor, PermissionsEditor
 from . import theme
 from .phrase_dialog import VoiceCombo
 
@@ -20,7 +22,10 @@ NONE_LABEL = "— nessuno —"
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, config: Config, parent=None, midi_bridge=None, preview_tts=None):
+    def __init__(self, config: Config, parent=None, midi_bridge=None, preview_tts=None,
+                 directory=None, sounds=None):
+        """``directory()``: ruoli e utenti visti dal bot ({"roles": [...], "users": {id: nome}});
+        ``sounds``: [(chiave, nome)] dei suoni da scegliere per entrate e uscite."""
         super().__init__(parent)
         self._bridge = midi_bridge
         self._preview_tts = preview_tts          # (testo, impostazioni) -> anteprima in cuffia
@@ -215,31 +220,11 @@ class SettingsDialog(QDialog):
         self.cmd_enabled = QCheckBox("Comandi da Discord: /suona, /pulsantiera, /canale-pulsantiera, /player…")
         self.cmd_enabled.setChecked(bool(cm.get("enabled", True)))
         bform.addRow(self.cmd_enabled)
-        self.cmd_sounds = QComboBox()
-        self.cmd_control = QComboBox()
-        for combo, key, default in ((self.cmd_sounds, "sounds_access", ACCESS_EVERYONE),
-                                    (self.cmd_control, "control_access", ACCESS_OWNER)):
-            for value, label in ACCESS_LABELS.items():
-                combo.addItem(label, value)
-            idx = combo.findData(cm.get(key, default))
-            combo.setCurrentIndex(max(0, idx))
-        self.cmd_sounds.setToolTip("Suonare i pad, /suona, /stop, /pulsantiera")
-        self.cmd_control.setToolTip("/entra, /esci, /player, /riproduci, /volume, /canale-pulsantiera")
-        bform.addRow("Chi può suonare", self.cmd_sounds)
-        bform.addRow("Chi può controllare", self.cmd_control)
-        self.cmd_role = QLineEdit(cm.get("role", ""))
-        self.cmd_role.setPlaceholderText("Nome o ID del ruolo, es. Soundboard")
-        bform.addRow("Ruolo", self.cmd_role)
-        update_role = lambda: self.cmd_role.setEnabled(ACCESS_ROLE in (self.cmd_sounds.currentData(),
-                                                                       self.cmd_control.currentData()))
-        self.cmd_sounds.currentIndexChanged.connect(update_role)
-        self.cmd_control.currentIndexChanged.connect(update_role)
-        update_role()
         cmd_hint = QLabel(
             "Scrivi <b>/pulsantiera</b> in un canale di testo per avere i pad come pulsanti, oppure "
             "<b>/canale-pulsantiera</b> in un canale dedicato: il bot ci tiene tutti i pad, aggiornati da soli. "
-            "Tu (il tuo ID utente) puoi sempre usare tutti i comandi. Se il bot era già nel server prima di "
-            "questa versione, invitalo di nuovo con il pulsante qui sotto per abilitare i comandi.")
+            "Chi può usare cosa si sceglie nella scheda <b>Permessi Discord</b>. Se il bot era già nel server "
+            "prima della 0.6, invitalo di nuovo con il pulsante qui sotto per abilitare i comandi.")
         cmd_hint.setWordWrap(True)
         cmd_hint.setTextFormat(Qt.TextFormat.RichText)
         cmd_hint.setStyleSheet(f"color: {theme.MUTED};")
@@ -375,6 +360,18 @@ class SettingsDialog(QDialog):
         tform.addRow(tts_hint)
         self._on_tts_engine()
 
+        # Permessi Discord ed entrate/uscite --------------------------------------------------------
+        directory = directory() if callable(directory) else (directory or {})
+        directory = {"roles": list(directory.get("roles", [])),
+                     "users": {**dc.get("known_users", {}), **directory.get("users", {})}}
+        self.perm_editor = PermissionsEditor(normalize_permissions(dc.get("permissions"), dc.get("commands")),
+                                             directory)
+        perm_box = QGroupBox("Permessi Discord")
+        QVBoxLayout(perm_box).addWidget(self.perm_editor)
+        self.greet_editor = GreetingsEditor(normalize_greetings(dc.get("greetings")), directory, sounds or [])
+        greet_box = QGroupBox("Entrate e uscite")
+        QVBoxLayout(greet_box).addWidget(self.greet_editor)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
@@ -382,7 +379,8 @@ class SettingsDialog(QDialog):
         self.tabs = QTabWidget()
         for box, title in ((audio_box, "Audio"), (midi_box, "MIDI"), (bot_box, "Bot Discord"),
                            (vst_box, "Plugin VST3"), (remote_box, "Controllo remoto"),
-                           (tts_box, "Sintesi vocale")):
+                           (tts_box, "Sintesi vocale"), (perm_box, "Permessi Discord"),
+                           (greet_box, "Entrate e uscite")):
             page = QWidget()
             pl = QVBoxLayout(page)
             box.setTitle("")
@@ -617,12 +615,9 @@ class SettingsDialog(QDialog):
             "continuous": self.bot_continuous.isChecked(),
             "presence": self.bot_presence.isChecked(),
             "shortcuts": {k: e.keySequence().toString() for k, e in self.bot_keys.items()},
-            "commands": {
-                "enabled": self.cmd_enabled.isChecked(),
-                "sounds_access": self.cmd_sounds.currentData(),
-                "control_access": self.cmd_control.currentData(),
-                "role": self.cmd_role.text().strip(),
-            },
+            "commands": {"enabled": self.cmd_enabled.isChecked()},
+            "permissions": self.perm_editor.values(),
+            "greetings": self.greet_editor.values(),
         })
         self.config.data["midi_map"] = self._map
         self.config.data["tts"] = self.tts_values()

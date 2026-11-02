@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.8.0 — 2026-11-03
+
+### Novità
+- **Nuovi suoni da YouTube e da link**: pulsante «Da YouTube o link…» nella tab Soundboard. Accetta un link di
+  YouTube (o un testo da cercare), una pagina di MyInstants o un link a un file audio; si può tenere solo un pezzo
+  (es. da 0:12 a 0:18). Il suono viene convertito in mp3 nella cartella e messo nel primo pad libero (massimo 10
+  minuti).
+- **Registro**: nuova tab con tutto quello che succede, con ora, tipo e **chi**: suoni premuti nella finestra, con
+  il MIDI, dal telefono o dalla pulsantiera di Discord (con il nome di chi ha premuto), frasi della sintesi vocale,
+  brani aggiunti alla playlist e da chi, comandi Discord, entrate e uscite dal canale vocale, permessi negati, nuovi
+  suoni ed errori. Filtri per tipo, ricerca, e un file al giorno nella cartella dati (tenuto 14 giorni).
+- **`/aggiungi-suono`** su Discord: carica un file (audio o video) oppure un link (YouTube, MyInstants, file audio,
+  o una ricerca), con nome, inizio e fine facoltativi; il bot risponde con la pagina e il pad dove l'ha messo.
+- **Permessi del bot più precisi** (nuova scheda Impostazioni → Permessi Discord): cinque gruppi di comandi
+  (Suonare, Sintesi vocale, Musica, Controllo del bot, Gestione), ognuno aperto a tutti oppure a **ruoli e utenti
+  scelti** da un elenco (ruoli dei server e persone già viste dal bot, o per ID); **utenti bloccati**; opzione
+  «gli amministratori del server possono tutto». Le impostazioni delle versioni precedenti vengono convertite.
+- **Suoni di entrata e uscita** (Impostazioni → Entrate e uscite): un suono quando una persona entra o esce dal
+  canale vocale del bot, per persona o per tutti, con un tempo minimo tra due ripetizioni; in alternativa un
+  annuncio con la sintesi vocale («{nome} è entrato»). Ognuno può scegliere i propri con **`/mio-suono`**.
+- **Canale «Sintesi vocale» nel mixer**: le frasi (barra 💬, pad con frasi, `/parla`, annunci) hanno un canale
+  tutto loro, con fader, mute, inserti ed effetti, separato dai suoni; nel monitor si può scegliere se sentirlo
+  («Voce»). Anche nella mappa MIDI e in `/volume`.
+
 ## v0.7.2 — 2026-11-02
 
 ### Novità

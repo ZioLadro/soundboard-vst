@@ -20,6 +20,9 @@ dei comandi slash (``Choice[str]``, ``Range[...]``) a runtime, e devono essere g
 import asyncio
 import colorsys
 import time
+from pathlib import Path
+
+from . import eventlog
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -34,14 +37,35 @@ ACCESS_OWNER, ACCESS_ROLE, ACCESS_EVERYONE = "owner", "role", "everyone"
 ACCESS_LABELS = {ACCESS_OWNER: "Solo io", ACCESS_ROLE: "Io e chi ha il ruolo indicato",
                  ACCESS_EVERYONE: "Chiunque nel server"}
 
-STRIP_CHOICES = [("Microfono", "mic"), ("Soundboard", "sounds"), ("Player", "player"),
+STRIP_CHOICES = [("Microfono", "mic"), ("Soundboard", "sounds"), ("Sintesi vocale", "tts"), ("Player", "player"),
                  ("Master → Discord", "master"), ("Monitor", "monitor")]
 
 PLAYER_CHOICES = [("Play / Pausa", "toggle"), ("Stop", "stop"), ("Successivo", "next"),
                   ("Precedente", "prev")]
 
-DENIED = "Non hai il permesso di usare questo comando della soundboard."
+DENIED = "Non hai il permesso per «{what}» sulla soundboard."
 NOT_OWNER_SET = "Il proprietario della soundboard deve impostare il suo ID utente nelle impostazioni del bot."
+
+
+def who_of(interaction) -> str:
+    """Come appare nel registro chi ha usato un comando o un pulsante."""
+    user = getattr(interaction, "user", None)
+    name = getattr(user, "display_name", None) or getattr(user, "name", None) or "?"
+    return f"{name} (Discord)"
+
+
+def command_text(interaction) -> str:
+    """«/comando opzione:valore …» per il registro."""
+    cmd = getattr(interaction, "command", None)
+    name = getattr(cmd, "qualified_name", None) or getattr(cmd, "name", "?")
+    parts = []
+    try:
+        for key, value in interaction.namespace:
+            value = getattr(value, "filename", None) or getattr(value, "name", None) or value
+            parts.append(f"{key}:{value}")
+    except Exception:
+        pass
+    return f"/{name} " + " ".join(parts) if parts else f"/{name}"
 
 
 class BoardError(RuntimeError):
@@ -70,22 +94,74 @@ def describe_error(exc: BaseException) -> str:
 
 
 # Permessi ---------------------------------------------------------------------------------
-def allowed(level: str, user_id: int, roles: Iterable[Any], owner_id: int, role: str = "") -> bool:
-    """Chi può usare un comando: il proprietario sempre; poi secondo il livello scelto.
+# (id, nome, cosa comprende)
+GROUPS = [
+    ("suoni", "Suonare", "pad e pulsantiera, /suona, /stop, /pulsantiera, /mio-suono"),
+    ("parla", "Sintesi vocale", "/parla"),
+    ("musica", "Musica", "/riproduci, /player e tasti del player"),
+    ("controllo", "Controllo del bot", "/entra, /esci, /volume"),
+    ("gestione", "Gestione", "/aggiungi-suono, /canale-pulsantiera, suoni di entrata degli altri"),
+]
+GROUP_NAMES = {g: name for g, name, _ in GROUPS}
 
-    ``role`` può essere il nome del ruolo (senza distinzione di maiuscole, con o senza @) o il suo ID.
+
+def default_permissions() -> dict:
+    groups = {g: {"everyone": g in ("suoni", "parla"), "roles": [], "users": []} for g, _, _ in GROUPS}
+    return {"admins": True, "blocked": [], "groups": groups}
+
+
+def normalize_permissions(perms: dict | None, commands_cfg: dict | None = None) -> dict:
+    """Permessi completi e puliti; senza permessi salvati converte quelli delle versioni precedenti
+    (``sounds_access``/``control_access``/``role`` nelle impostazioni dei comandi)."""
+    out = default_permissions()
+    if not perms:
+        old = commands_cfg or {}
+        if any(k in old for k in ("sounds_access", "control_access")):
+            role = str(old.get("role") or "").strip().lstrip("@").strip()
+            for level_key, groups in (("sounds_access", ("suoni", "parla")),
+                                      ("control_access", ("musica", "controllo", "gestione"))):
+                level = old.get(level_key, ACCESS_EVERYONE if level_key == "sounds_access" else ACCESS_OWNER)
+                for g in groups:
+                    out["groups"][g] = {"everyone": level == ACCESS_EVERYONE,
+                                        "roles": [role] if level == ACCESS_ROLE and role else [], "users": []}
+            out["admins"] = False                 # prima gli amministratori non avevano diritti speciali
+        return out
+    out["admins"] = bool(perms.get("admins", True))
+    out["blocked"] = [str(u) for u in perms.get("blocked") or [] if str(u).strip()]
+    for g, cfg in (perms.get("groups") or {}).items():
+        if g in out["groups"] and isinstance(cfg, dict):
+            out["groups"][g] = {"everyone": bool(cfg.get("everyone")),
+                                "roles": [str(r) for r in cfg.get("roles") or [] if str(r).strip()],
+                                "users": [str(u) for u in cfg.get("users") or [] if str(u).strip()]}
+    return out
+
+
+def _role_matches(entry: str, role) -> bool:
+    want = entry.strip().lstrip("@").strip().lower()
+    return bool(want) and (str(getattr(role, "id", "")) == want or str(getattr(role, "name", "")).lower() == want)
+
+
+def allowed(group: str, user_id: int, roles: Iterable[Any], owner_id: int, perms: dict,
+            is_admin: bool = False) -> bool:
+    """Chi può usare un gruppo di comandi.
+
+    Il proprietario può sempre tutto; un utente bloccato mai; gli amministratori del server tutto se
+    previsto; poi «chiunque», oppure gli utenti e i ruoli scelti (ruolo per ID o per nome).
     """
     if owner_id and user_id == owner_id:
         return True
-    if level == ACCESS_EVERYONE:
+    uid = str(user_id)
+    if uid in perms.get("blocked", []):
+        return False
+    if is_admin and perms.get("admins", True):
         return True
-    if level == ACCESS_ROLE:
-        want = (role or "").strip().lstrip("@").strip().lower()
-        if not want:
-            return False
-        return any(str(getattr(r, "id", "")) == want or str(getattr(r, "name", "")).lower() == want
-                   for r in roles)
-    return False
+    g = (perms.get("groups") or {}).get(group) or {}
+    if g.get("everyone"):
+        return True
+    if uid in g.get("users", []):
+        return True
+    roles = list(roles)
+    return any(_role_matches(entry, r) for entry in g.get("roles", []) for r in roles)
 
 
 # Pad ----------------------------------------------------------------------------------------
@@ -258,16 +334,38 @@ class Commands:
     def cfg(self) -> dict:
         return self.bot.commands_cfg
 
-    def can(self, interaction, level_key: str) -> bool:
+    def can(self, interaction, group: str) -> bool:
         user = interaction.user
-        return allowed(self.cfg.get(level_key, ACCESS_OWNER), user.id, getattr(user, "roles", []),
-                       self.bot.owner_id, self.cfg.get("role", ""))
+        self.bot.remember_user(user)
+        perms = getattr(user, "guild_permissions", None)
+        return allowed(group, user.id, getattr(user, "roles", []), self.bot.owner_id, self.bot.permissions,
+                       is_admin=bool(getattr(perms, "administrator", False)))
 
-    async def deny(self, interaction) -> None:
-        text = DENIED
-        if not self.bot.owner_id and self.cfg.get("control_access", ACCESS_OWNER) == ACCESS_OWNER:
+    async def deny(self, interaction, group: str = "") -> None:
+        what = GROUP_NAMES.get(group, "questo comando")
+        eventlog.log(eventlog.PERMISSION, f"Permesso negato: {what}", who_of(interaction))
+        text = DENIED.format(what=what)
+        if not self.bot.owner_id:
             text += "\n" + NOT_OWNER_SET
         await self._reply(interaction, text)
+
+    def send(self, interaction, command: dict) -> None:
+        """Manda un comando alla soundboard, con il nome di chi l'ha dato (per il registro)."""
+        self.bot.send_command({**command, "by": who_of(interaction)})
+
+    async def ask(self, interaction, command: dict, timeout: float = 300.0) -> tuple[bool, str]:
+        """Manda un comando e aspetta la risposta della soundboard (``_done(ok, messaggio)``)."""
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+
+        def done(ok: bool, msg: str) -> None:            # chiamata dal thread dell'interfaccia
+            loop.call_soon_threadsafe(lambda: fut.done() or fut.set_result((ok, msg)))
+
+        self.send(interaction, {**command, "_done": done})
+        try:
+            return await asyncio.wait_for(fut, timeout)
+        except (asyncio.TimeoutError, TimeoutError):
+            return False, "⏳ La soundboard non ha risposto in tempo (è aperta?)."
 
     async def _reply(self, interaction, text: str, **kw) -> None:
         kw.setdefault("ephemeral", True)
@@ -385,9 +483,9 @@ class Commands:
     async def press_pad(self, interaction, page: int, index: int) -> None:
         if not self.cfg.get("enabled", True):
             return await self._reply(interaction, "I comandi da Discord sono disattivati nella soundboard.")
-        if not self.can(interaction, "sounds_access"):
-            return await self.deny(interaction)
-        self.bot.send_command({"cmd": "pad", "page": page, "index": index})
+        if not self.can(interaction, "suoni"):
+            return await self.deny(interaction, "suoni")
+        self.send(interaction, {"cmd": "pad", "page": page, "index": index})
         if interaction.guild is not None and not self._in_voice(interaction.guild):
             await self._reply(interaction, "Suono avviato, ma il bot non è in un canale vocale di questo "
                                            "server: usa /entra per farlo sentire qui.")
@@ -395,8 +493,8 @@ class Commands:
             await interaction.response.defer()          # nessun messaggio: il suono parte e basta
 
     async def navigate(self, interaction, page: int, chunk: int) -> None:
-        if not self.can(interaction, "sounds_access"):
-            return await self.deny(interaction)
+        if not self.can(interaction, "suoni"):
+            return await self.deny(interaction, "suoni")
         if self._is_board_message(interaction.message):
             # nel canale dedicato non si sfoglia: si aggiorna tutto (e si riavvia l'aggiornamento automatico)
             await interaction.response.defer()
@@ -411,13 +509,13 @@ class Commands:
 
     async def press_action(self, interaction, action: str) -> None:
         if action == "stop":
-            if not self.can(interaction, "sounds_access"):
-                return await self.deny(interaction)
-            self.bot.send_command({"cmd": "stop_sounds"})
+            if not self.can(interaction, "suoni"):
+                return await self.deny(interaction, "suoni")
+            self.send(interaction, {"cmd": "stop_sounds"})
         elif action.startswith("player_"):
-            if not self.can(interaction, "control_access"):
-                return await self.deny(interaction)
-            self.bot.send_command({"cmd": "player", "action": action.split("_", 1)[1]})
+            if not self.can(interaction, "musica"):
+                return await self.deny(interaction, "musica")
+            self.send(interaction, {"cmd": "player", "action": action.split("_", 1)[1]})
         await interaction.response.defer()
 
     # Comandi slash ---------------------------------------------------------------------------
@@ -425,14 +523,15 @@ class Commands:
         tree, cmds = self.tree, self
         Choice = app_commands.Choice
 
-        def needs(level_key: str):
+        def needs(group: str):
             async def predicate(interaction) -> bool:
                 if not cmds.cfg.get("enabled", True):
                     await cmds._reply(interaction, "I comandi da Discord sono disattivati nella soundboard.")
                     return False
-                if not cmds.can(interaction, level_key):
-                    await cmds.deny(interaction)
+                if not cmds.can(interaction, group):
+                    await cmds.deny(interaction, group)
                     return False
+                eventlog.log(eventlog.COMMAND, command_text(interaction), who_of(interaction))
                 return True
             return app_commands.check(predicate)
 
@@ -454,27 +553,27 @@ class Commands:
         @tree.command(name="suona", description="Riproduce un suono della soundboard")
         @app_commands.describe(suono="Nome del suono (scrivi per cercare)")
         @app_commands.autocomplete(suono=sound_autocomplete)
-        @needs("sounds_access")
+        @needs("suoni")
         async def suona(interaction, suono: str):
             s = resolve_sound(cmds.bot.get_state(), suono)
             if s is None:
                 return await cmds._reply(interaction, f"Nessun suono trovato per «{suono[:100]}».")
-            cmds.bot.send_command({"cmd": "sound", "key": s["key"]})
+            cmds.send(interaction, {"cmd": "sound", "key": s["key"]})
             note = "" if interaction.guild is None or cmds._in_voice(interaction.guild) else \
                 " (il bot non è in un canale vocale: usa /entra)"
             await cmds._reply(interaction, f"▶ {button_label(s['label'], s.get('emoji', ''))}{note}")
 
         @tree.command(name="stop", description="Ferma tutti i suoni della soundboard")
-        @needs("sounds_access")
+        @needs("suoni")
         async def stop(interaction):
-            cmds.bot.send_command({"cmd": "stop_sounds"})
+            cmds.send(interaction, {"cmd": "stop_sounds"})
             await cmds._reply(interaction, "■ Suoni fermati.")
 
         @tree.command(name="parla", description="Fa dire una frase alla sintesi vocale della soundboard")
         @app_commands.describe(testo="La frase da dire (fino a 300 caratteri)")
-        @needs("sounds_access")
+        @needs("parla")
         async def parla(interaction, testo: app_commands.Range[str, 1, 300]):
-            cmds.bot.send_command({"cmd": "say", "text": testo})
+            cmds.send(interaction, {"cmd": "say", "text": testo})
             note = "" if interaction.guild is None or cmds._in_voice(interaction.guild) else \
                 " (il bot non è in un canale vocale: usa /entra)"
             await cmds._reply(interaction, f"💬 {testo[:200]}{note}")
@@ -482,7 +581,7 @@ class Commands:
         @tree.command(name="pulsantiera", description="Mostra i pad della soundboard come pulsanti")
         @app_commands.describe(pagina="Pagina dei pad da mostrare (da 1)",
                                privata="Visibile solo a te (predefinito: visibile a tutti nel canale)")
-        @needs("sounds_access")
+        @needs("suoni")
         async def pulsantiera(interaction, pagina: app_commands.Range[int, 1, 999] = 1, privata: bool = False):
             title, view = cmds.panel(pagina - 1, 0)
             await interaction.response.send_message(title, view=view, ephemeral=privata)
@@ -492,7 +591,7 @@ class Commands:
         @app_commands.describe(azione="«qui» per usare questo canale, «rimuovi» per smettere")
         @app_commands.choices(azione=[Choice(name="Usa questo canale", value="qui"),
                                       Choice(name="Rimuovi la pulsantiera fissa", value="rimuovi")])
-        @needs("control_access")
+        @needs("gestione")
         async def canale_pulsantiera(interaction, azione: Choice[str]):
             if azione.value == "rimuovi":
                 await interaction.response.defer(ephemeral=True, thinking=True)
@@ -513,7 +612,7 @@ class Commands:
                                            "aggiornano da soli quando cambi i pad nella soundboard.")
 
         @tree.command(name="entra", description="Fa entrare il bot nel tuo canale vocale")
-        @needs("control_access")
+        @needs("controllo")
         async def entra(interaction):
             voice = getattr(interaction.user, "voice", None)
             channel = getattr(voice, "channel", None)
@@ -525,7 +624,7 @@ class Commands:
             await cmds._reply(interaction, f"Sono in {channel.mention}." if ok else cmds.bot.status.message)
 
         @tree.command(name="esci", description="Fa uscire il bot dal canale vocale")
-        @needs("control_access")
+        @needs("controllo")
         async def esci(interaction):
             vc = interaction.guild.voice_client if interaction.guild else None
             if vc is None:
@@ -535,25 +634,108 @@ class Commands:
 
         @tree.command(name="player", description="Comandi del player musicale della soundboard")
         @app_commands.choices(azione=[Choice(name=n, value=v) for n, v in PLAYER_CHOICES])
-        @needs("control_access")
+        @needs("musica")
         async def player(interaction, azione: Choice[str]):
-            cmds.bot.send_command({"cmd": "player", "action": azione.value})
+            cmds.send(interaction, {"cmd": "player", "action": azione.value})
             await cmds._reply(interaction, f"Player: {azione.name}.")
 
         @tree.command(name="riproduci", description="Aggiunge al player un link o una ricerca di YouTube")
         @app_commands.describe(cerca="Link di YouTube (video o playlist) o testo da cercare")
-        @needs("control_access")
+        @needs("musica")
         async def riproduci(interaction, cerca: app_commands.Range[str, 1, 500]):
-            cmds.bot.send_command({"cmd": "player_add", "text": cerca})
+            cmds.send(interaction, {"cmd": "player_add", "text": cerca})
             await cmds._reply(interaction, f"Aggiunto al player: {cerca[:200]}")
 
         @tree.command(name="volume", description="Regola il volume di un canale del mixer")
         @app_commands.describe(canale="Canale del mixer", db="Volume in dB (da -60 a +12; 0 = invariato)")
         @app_commands.choices(canale=[Choice(name=n, value=v) for n, v in STRIP_CHOICES])
-        @needs("control_access")
+        @needs("controllo")
         async def volume(interaction, canale: Choice[str], db: app_commands.Range[float, -60.0, 12.0]):
-            cmds.bot.send_command({"cmd": "strip", "id": canale.value, "gain_db": float(db)})
+            cmds.send(interaction, {"cmd": "strip", "id": canale.value, "gain_db": float(db)})
             await cmds._reply(interaction, f"{canale.name}: {db:+.1f} dB")
+
+        discord = self.discord
+
+        @tree.command(name="aggiungi-suono", description="Aggiunge un suono alla soundboard da un file, da YouTube o da un link")
+        @app_commands.describe(file="File audio o video da caricare",
+                               link="Link di YouTube, MyInstants o a un file audio, oppure cosa cercare su YouTube",
+                               nome="Nome del suono (facoltativo)", inizio="Da dove partire, es. 0:12 (facoltativo)",
+                               fine="Dove finire, es. 0:18 (facoltativo)")
+        @needs("gestione")
+        async def aggiungi_suono(interaction, file: discord.Attachment = None,
+                                 link: app_commands.Range[str, 1, 500] = None,
+                                 nome: app_commands.Range[str, 1, 80] = None,
+                                 inizio: app_commands.Range[str, 1, 12] = None,
+                                 fine: app_commands.Range[str, 1, 12] = None):
+            from . import importer
+
+            if (file is None) == (link is None):
+                return await cmds._reply(interaction, "Indica **un** file oppure **un** link.")
+            try:
+                start, end = importer.parse_time(inizio), importer.parse_time(fine)
+            except importer.ImportError_ as exc:
+                return await cmds._reply(interaction, f"❌ {exc}")
+            if end and end <= start:
+                return await cmds._reply(interaction, "❌ La fine deve venire dopo l'inizio.")
+            if file is not None and file.size > importer.MAX_DOWNLOAD:
+                return await cmds._reply(interaction, f"❌ File troppo grande (massimo "
+                                                      f"{importer.MAX_DOWNLOAD // 1024 // 1024} MB).")
+            await interaction.response.defer(thinking=True)
+            command = {"cmd": "import_sound", "name": nome or "", "start": inizio or "", "end": fine or ""}
+            if file is not None:
+                dest = importer.new_incoming(Path(file.filename).suffix)
+                await file.save(dest)
+                command.update(source=str(dest), local=True, name=nome or Path(file.filename).stem)
+            else:
+                command.update(source=link, local=False)
+            ok, msg = await cmds.ask(interaction, command)
+            await interaction.followup.send(msg + (f" (da {interaction.user.mention})" if ok else ""),
+                                            ephemeral=not ok)
+
+        def greeting_choices(current: str):
+            items = [Choice(name="— niente —", value="-")]
+            items += [Choice(name=button_label(s["label"], s.get("emoji", ""))[:100], value=s["key"][:100])
+                      for s in search_sounds(cmds.bot.get_state(), current, 24)]
+            return items
+
+        async def greeting_autocomplete(interaction, current: str):
+            return greeting_choices(current)
+
+        @tree.command(name="mio-suono", description="Sceglie il suono che parte quando entri o esci dal canale vocale")
+        @app_commands.describe(entrata="Suono quando entri («— niente —» per toglierlo)",
+                               uscita="Suono quando esci («— niente —» per toglierlo)",
+                               utente="Per un'altra persona (serve il permesso di gestione)")
+        @app_commands.autocomplete(entrata=greeting_autocomplete, uscita=greeting_autocomplete)
+        @needs("suoni")
+        async def mio_suono(interaction, entrata: str = None, uscita: str = None, utente: discord.Member = None):
+            target = utente or interaction.user
+            if target.id != interaction.user.id and not cmds.can(interaction, "gestione"):
+                return await cmds.deny(interaction, "gestione")
+            if entrata is None and uscita is None:
+                entry = cmds.bot.greetings.get("users", {}).get(str(target.id), {})
+                state = cmds.bot.get_state()
+                names = {s["key"]: s["label"] for s in state.get("library", [])}
+                show = lambda k: f"**{names.get(k, k)}**" if k else "niente"
+                return await cmds._reply(interaction, f"Per {target.display_name}: entrata {show(entry.get('join'))}, "
+                                                      f"uscita {show(entry.get('leave'))}.")
+            state = cmds.bot.get_state()
+
+            def pick(value):
+                if value is None:
+                    return None
+                if value.strip() in ("-", "", "niente", "nessuno"):
+                    return ""
+                s = resolve_sound(state, value)
+                return s["key"] if s else False
+
+            join, leave = pick(entrata), pick(uscita)
+            if join is False or leave is False:
+                return await cmds._reply(interaction, "❌ Suono non trovato: scegli tra i suggerimenti.")
+            cmds.bot.remember_user(target)
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            ok, msg = await cmds.ask(interaction, {"cmd": "set_greeting", "user": str(target.id),
+                                                   "name": target.display_name, "join": join, "leave": leave}, 30)
+            await interaction.followup.send(msg, ephemeral=True)
 
         @tree.command(name="aiuto", description="Elenco dei comandi della soundboard")
         async def aiuto(interaction):
@@ -563,6 +745,8 @@ class Commands:
                 "`/pulsantiera` pad come pulsanti\n"
                 "**Controllo**\n"
                 "`/entra` · `/esci` · `/player` · `/riproduci` (YouTube) · `/volume`\n"
+                "**Gestione**\n"
+                "`/aggiungi-suono` nuovo suono da file, YouTube o link · `/mio-suono` il tuo suono di entrata/uscita\n"
                 "`/canale-pulsantiera` tiene tutti i pad in un canale dedicato"))
 
     # Canale dedicato ---------------------------------------------------------------------------

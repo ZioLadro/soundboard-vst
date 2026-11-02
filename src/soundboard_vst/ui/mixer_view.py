@@ -292,11 +292,16 @@ class MixerView(QWidget):
         self.hear_mic.setToolTip("Sentirti in cuffia (con i tuoi inserti). Attenzione al feedback con le casse.")
         self.hear_player = QCheckBox("Player")
         self.hear_player.setChecked(self.engine.monitor_hear_player)
+        self.hear_tts = QCheckBox("Voce")
+        self.hear_tts.setToolTip("Sintesi vocale")
+        self.hear_tts.setChecked(self.engine.monitor_hear_tts)
+        self.hear_tts.toggled.connect(lambda v: self._set_monitor("monitor_hear_tts", v))
         self.hear_player.toggled.connect(lambda v: self._set_monitor("monitor_hear_player", v))
         self.hear_sounds.toggled.connect(lambda v: self._set_monitor("monitor_hear_sounds", v))
         self.hear_mic.toggled.connect(lambda v: self._set_monitor("monitor_hear_mic", v))
         w.extra.addWidget(label)
         w.extra.addWidget(self.hear_sounds)
+        w.extra.addWidget(self.hear_tts)
         w.extra.addWidget(self.hear_player)
         w.extra.addWidget(self.hear_mic)
 
@@ -305,6 +310,7 @@ class MixerView(QWidget):
         self.changed.emit()
 
     def sync_from_model(self) -> None:
+        self.hear_tts.setChecked(self.engine.monitor_hear_tts)
         for w in self.strips:
             w.sync_from_model()
         self.hear_sounds.setChecked(self.engine.monitor_hear_sounds)
