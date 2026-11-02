@@ -252,6 +252,7 @@ class DiscordBot:
                                    "control_access": "owner", "role": ""}
         self.board_channel: int = 0        # canale dedicato alla pulsantiera (0 = nessuno)
         self.board_messages: list[int] = []
+        self.board_info: dict = {}          # ultimo aggiornamento del canale dedicato: {"time", "error", "channel"}
         self._commands = None
         self.owner_id: int = 0
         self.follow = True
@@ -317,6 +318,10 @@ class DiscordBot:
             synced.update(g.id for g in todo)
             await commands.sync(todo)
             commands.start_board_loop()
+
+        @client.event
+        async def on_resumed():
+            commands.start_board_loop()      # se dopo un'interruzione si fosse fermato, riparte
 
         @client.event
         async def on_guild_join(guild):
@@ -400,6 +405,15 @@ class DiscordBot:
             asyncio.run_coroutine_threadsafe(coro, self._loop)
         else:
             coro.close()
+
+    def refresh_board(self) -> None:
+        """Ripubblica/aggiorna subito la pulsantiera nel canale dedicato (dal menu del bot)."""
+        commands = self._commands
+        if commands is not None and self._client is not None:
+            async def run():
+                commands.start_board_loop()
+                commands._board_sig = None
+            self._submit(run())
 
     def resync_commands(self) -> None:
         """Registra di nuovo i comandi (es. dopo averli attivati o disattivati) e aggiorna la pulsantiera."""

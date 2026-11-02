@@ -13,7 +13,7 @@ la tua voce **più** i suoni, già mixati ed elaborati.
   - **Libreria** a sinistra con tutti i file della cartella (`wav`, `mp3`, `ogg`, `flac`, `aif/aiff`): trascina un suono su un pad per assegnarlo; i file che non sono su nessun pad appaiono in grigio.
   - Trascina un pad su un altro per spostarli o scambiarli; clic su uno slot vuoto per assegnargli un suono.
   - Cartella predefinita `Musica\Suoni`, oppure una a scelta. I file nuovi (aggiunti, trascinati dall'esplora risorse o scaricati) finiscono nel primo pad libero.
-  - Tasto destro su un pad → *Personalizza…*: **nome sul pad**, **immagine**, volume (0–200%), **colore** (12 colori o uno a scelta), **icona emoji**, scorciatoia da tastiera e **nota MIDI**. Dallo stesso menu: togli dal pad, rinomina il file, sposta nel cestino.
+  - Tasto destro su un pad → *Personalizza…*: **nome sul pad**, **immagine**, volume (0–200%), **inizio, fine e dissolvenze** (sulla forma d'onda), **colore** (12 colori o uno a scelta), **icona emoji**, scorciatoia da tastiera e **nota MIDI**. Dallo stesso menu: togli dal pad, rinomina il file, sposta nel cestino.
 - **Controller MIDI**: scegli il controller in Impostazioni → MIDI, poi su un suono premi **Impara** e suona una nota o un pad (note e controlli CC, con il canale). Opzionalmente la forza con cui premi (velocity) regola il volume.
   - «Sovrapponi» per far suonare lo stesso suono più volte insieme, «Stop tutto» per zittire tutto.
 - **Ricerca su [MyInstants](https://www.myinstants.com)** direttamente dall'app: cerca o sfoglia le tendenze, ascolta l'anteprima solo in cuffia (non arriva a Discord), e aggiungi il suono con un clic: viene scaricato nella cartella e messo su un pad.
@@ -154,6 +154,8 @@ Con il bot online, in qualsiasi canale di testo del server:
 | `/parla testo:` | La sintesi vocale dice la frase (fino a 300 caratteri) |
 | `/aiuto` | Elenco dei comandi |
 
+Se la pulsantiera nel canale smette di aggiornarsi, il menu 🤖 dice perché («Pulsantiera nel canale: …») e ha «Aggiorna ora la pulsantiera nel canale»; il bot comunque riprova da solo. Anche il pulsante ↻ nel canale la aggiorna subito.
+
 I colori dei pulsanti seguono quelli dei pad (rosso, verde, blu o grigio: Discord ha solo questi quattro) e l'emoji compare nel testo. I pulsanti funzionano anche dopo aver riavviato la soundboard. Per il canale dedicato conviene un canale in cui solo il bot può scrivere.
 
 **Permessi** (Impostazioni → Bot Discord):
@@ -164,6 +166,16 @@ I colori dei pulsanti seguono quelli dei pad (rosso, verde, blu o grigio: Discor
 - Se disattivi «Comandi da Discord», il bot li toglie dai server.
 
 **Bot invitato con una versione precedente**: invitalo di nuovo con «Invita il bot nel server…» (non serve toglierlo prima). Il nuovo link aggiunge i comandi e i permessi *Visualizza canale* e *Invia messaggi* per il canale dedicato. I comandi compaiono subito nei server in cui c'è il bot; se Discord non li mostra, riavvia il client Discord (Ctrl+R).
+
+## Inizio, fine e dissolvenze
+
+Tasto destro su un pad → **Personalizza…** → *Taglio e dissolvenze*:
+
+- **Linee verticali**: trascinale per scegliere da dove parte e dove finisce il suono (le parti scure non si sentono). Clic su un punto della forma d'onda per spostarci la linea più vicina.
+- **Quadratini in alto**: trascinali verso l'interno per la **dissolvenza in entrata** (sinistra) e **in uscita** (destra); la curva arancione mostra il volume.
+- I tempi si possono anche scrivere in secondi; *Fine* = «fine» vuol dire fino alla fine del file. **▶ Ascolta** prova il risultato in cuffia (con il volume scelto), **Ripristina** torna al suono intero.
+
+Il file non viene modificato. Vale anche per le frasi della sintesi vocale (la forma d'onda compare dopo che la frase è stata detta almeno una volta). Se il taglio cade in mezzo al suono, una micro-dissolvenza di 3 ms evita il «clic».
 
 ## Sintesi vocale e frasi sui pad
 

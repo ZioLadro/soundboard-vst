@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.7.1 — 2026-11-02
+
+### Novità
+- **Inizio, fine e dissolvenze per ogni pad**: in *Personalizza…* c'è la forma d'onda del suono; si trascinano le
+  linee per scegliere da dove parte e dove finisce, e i quadratini in alto per la dissolvenza in entrata e in
+  uscita (curva morbida). I tempi si possono anche scrivere in secondi; «▶ Ascolta» prova il risultato in cuffia.
+  Vale anche per le frasi della sintesi vocale. Quando il taglio cade in mezzo al suono si applica da sola una
+  micro-dissolvenza di 3 ms che evita il «clic». Il suono tagliato viene calcolato una volta e ricordato.
+
+### Correzioni
+- **Pulsantiera nel canale dedicato che smetteva di aggiornarsi**: se all'avvio del bot il primo aggiornamento
+  falliva (rete non ancora pronta, errore temporaneo di Discord) l'aggiornamento automatico si fermava per sempre;
+  una richiesta rimasta appesa (es. dopo lo standby del PC) poteva bloccarlo fino a 5 minuti, anche il pulsante ↻.
+  Ora non si ferma mai: ogni aggiornamento ha un tempo massimo, dopo un errore riprova a intervalli crescenti e
+  ripubblica tutto, e riparte da solo quando Discord si riconnette o premendo ↻.
+- Il canale dedicato viene trovato anche se non è nella memoria del bot, e se è un thread archiviato lo riapre.
+  Se il canale è stato eliminato, il bot lo dimentica e lo dice.
+- Se una ripubblicazione si interrompe a metà, i messaggi già inviati vengono sostituiti e non restano doppioni.
+- Il menu 🤖 mostra lo stato della pulsantiera («controllata alle…» o l'errore) e ha «Aggiorna ora la pulsantiera
+  nel canale»; un errore viene mostrato una volta sola e c'è un messaggio quando torna a funzionare.
+
 ## v0.7.0 — 2026-11-02
 
 ### Novità

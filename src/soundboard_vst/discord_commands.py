@@ -19,12 +19,15 @@ dei comandi slash (``Choice[str]``, ``Range[...]``) a runtime, e devono essere g
 
 import asyncio
 import colorsys
+import time
 from dataclasses import dataclass
 from typing import Any, Iterable
 
 PANEL_PADS = 20          # pulsantiera con navigazione: 4 righe di pad + 1 riga di comandi
 CHANNEL_PADS = 25        # canale dedicato: 5 righe da 5 per messaggio
 BOARD_REFRESH_S = 3.0    # ogni quanto il canale dedicato controlla se i pad sono cambiati
+BOARD_TIMEOUT_S = 30.0   # oltre questo tempo un aggiornamento si considera bloccato (es. dopo lo standby)
+BOARD_RETRY_MAX_S = 60.0 # dopo un errore si riprova a intervalli crescenti, fino a questo
 LABEL_MAX = 80           # limite di Discord per il testo di un pulsante
 
 ACCESS_OWNER, ACCESS_ROLE, ACCESS_EVERYONE = "owner", "role", "everyone"
@@ -39,6 +42,31 @@ PLAYER_CHOICES = [("Play / Pausa", "toggle"), ("Stop", "stop"), ("Successivo", "
 
 DENIED = "Non hai il permesso di usare questo comando della soundboard."
 NOT_OWNER_SET = "Il proprietario della soundboard deve impostare il suo ID utente nelle impostazioni del bot."
+
+
+class BoardError(RuntimeError):
+    """Problema del canale dedicato da mostrare così com'è."""
+
+
+def describe_error(exc: BaseException) -> str:
+    """Messaggio breve e comprensibile per un errore di Discord o di rete."""
+    if isinstance(exc, BoardError):
+        return str(exc)
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return "Discord non risponde (connessione persa o PC appena uscito dallo standby)"
+    name = exc.__class__.__name__
+    status = getattr(exc, "status", None)
+    code = getattr(exc, "code", None)
+    if name == "Forbidden" or status == 403:
+        return "mi manca un permesso nel canale (servono «Visualizza canale» e «Invia messaggi»)"
+    if code == 50083:
+        return "il thread è archiviato"
+    if status is not None and status >= 500:
+        return "Discord ha un problema temporaneo"
+    if any(k in name for k in ("Connector", "Connection", "ClientOS", "ServerDisconnected", "gaierror")):
+        return "connessione a Discord non disponibile"
+    text = str(exc).strip().splitlines()
+    return (text[0] if text else name)[:200]
 
 
 # Permessi ---------------------------------------------------------------------------------
@@ -220,6 +248,7 @@ class Commands:
         self.tree = app_commands.CommandTree(client)
         self._board_task: asyncio.Task | None = None
         self._board_sig: tuple | None = None
+        self.board_error = ""
         self._board_lock = asyncio.Lock()
         self._define_commands(app_commands)
         client.add_dynamic_items(*self._dynamic_items())
@@ -369,9 +398,13 @@ class Commands:
         if not self.can(interaction, "sounds_access"):
             return await self.deny(interaction)
         if self._is_board_message(interaction.message):
-            # nel canale dedicato non si sfoglia: si aggiorna tutto
+            # nel canale dedicato non si sfoglia: si aggiorna tutto (e si riavvia l'aggiornamento automatico)
             await interaction.response.defer()
-            await self.sync_board(force=True)
+            self.start_board_loop()
+            try:
+                await asyncio.wait_for(self.sync_board(force=True), BOARD_TIMEOUT_S)
+            except Exception as exc:
+                await self._reply(interaction, f"Non riesco ad aggiornare la pulsantiera: {describe_error(exc)}")
             return
         title, view = self.panel(page, chunk)
         await interaction.response.edit_message(content=title, view=view)
@@ -537,52 +570,92 @@ class Commands:
         return message is not None and message.id in set(self.bot.board_messages)
 
     def start_board_loop(self) -> None:
+        """Avvia (o riavvia, se si era fermato) l'aggiornamento automatico del canale dedicato."""
         if self._board_task is None or self._board_task.done():
             self._board_task = asyncio.get_running_loop().create_task(self._board_loop())
 
     async def _board_loop(self) -> None:
-        await self.sync_board(force=True)        # dopo un riavvio: ripristina etichette e pad cambiati
+        """Non si ferma mai da solo: ogni errore viene mostrato e si riprova, risincronizzando tutto."""
+        force, delay = True, BOARD_REFRESH_S         # all'avvio: ripristina etichette e pad cambiati
         while not self.client.is_closed():
-            await asyncio.sleep(BOARD_REFRESH_S)
             try:
-                await self.sync_board()
+                await asyncio.wait_for(self.sync_board(force=force), BOARD_TIMEOUT_S)
+            except asyncio.CancelledError:
+                raise
             except Exception as exc:
-                self.bot._set_status(message=f"Pulsantiera nel canale: {exc}")
+                msg = describe_error(exc)
+                delay = min(BOARD_RETRY_MAX_S, delay * 2)
+                if msg != self.board_error:
+                    self.bot._set_status(message=f"Pulsantiera nel canale: {msg}. Riprovo da solo.")
+                self.board_error = msg
+                self._board_sig = None
+                force = True
+                self.bot.board_info = {"time": None, "error": msg}
+            else:
+                if self.board_error:
+                    self.bot._set_status(message="Pulsantiera nel canale di nuovo aggiornata.")
+                self.board_error = ""
+                if self.bot.board_channel:            # controllata ora (anche se non c'era niente da cambiare)
+                    self.bot.board_info = {**self.bot.board_info, "time": time.time(), "error": ""}
+                force, delay = False, BOARD_REFRESH_S
+            await asyncio.sleep(delay)
 
-    def _board_channel(self):
+    async def _resolve_board_channel(self):
+        """Il canale dedicato, anche se non è nella cache (es. un thread) o è un thread archiviato."""
         cid = self.bot.board_channel
-        return self.client.get_channel(cid) if cid else None
+        if not cid:
+            return None
+        discord = self.discord
+        channel = self.client.get_channel(cid)
+        if channel is None:
+            try:
+                channel = await self.client.fetch_channel(cid)
+            except discord.NotFound:
+                self.bot.set_board(0, [])            # canale eliminato: non c'è più niente da aggiornare
+                self._board_sig = None
+                raise BoardError("il canale della pulsantiera è stato eliminato: usa di nuovo /canale-pulsantiera")
+            except discord.Forbidden:
+                raise BoardError("non ho più accesso al canale della pulsantiera")
+        if getattr(channel, "archived", False):      # thread archiviato dopo un periodo di inattività
+            if getattr(channel, "locked", False):
+                raise BoardError("il thread della pulsantiera è bloccato")
+            await channel.edit(archived=False)
+        return channel
 
     async def sync_board(self, force: bool = False) -> None:
         """Allinea i messaggi del canale dedicato ai pad attuali (solo se sono cambiati)."""
         async with self._board_lock:
-            channel = self._board_channel()
-            if channel is None:
-                return
-            if not self.cfg.get("enabled", True):
+            if not self.bot.board_channel or not self.cfg.get("enabled", True):
                 return
             messages = channel_messages(self.bot.get_state())
             sig = board_signature(messages)
             if not force and sig == self._board_sig:
                 return
+            channel = await self._resolve_board_channel()
+            if channel is None:
+                return
             ids = list(self.bot.board_messages)
             discord = self.discord
+            done = False
             if len(ids) == len(messages):
                 try:
                     for mid, m in zip(ids, messages):
                         await channel.get_partial_message(mid).edit(content=m["content"], view=self._view_for(m))
-                    self._board_sig = sig
-                    return
+                    done = True
                 except discord.NotFound:
                     pass             # qualcuno ha cancellato un messaggio: si ripubblica tutto
-            # numero di messaggi cambiato: per mantenerli in ordine si ripubblicano
-            await self._delete_messages(channel, ids)
-            new_ids = []
-            for m in messages:
-                msg = await channel.send(m["content"], view=self._view_for(m))
-                new_ids.append(msg.id)
-            self.bot.set_board(channel.id, new_ids)
+            if not done:
+                # numero di messaggi cambiato: per mantenerli in ordine si ripubblicano
+                await self._delete_messages(channel, ids)
+                new_ids: list[int] = []
+                self.bot.set_board(channel.id, new_ids)
+                for m in messages:
+                    msg = await channel.send(m["content"], view=self._view_for(m))
+                    new_ids.append(msg.id)
+                    self.bot.set_board(channel.id, new_ids)   # salvati man mano: niente doppioni se si interrompe
             self._board_sig = sig
+            self.bot.board_info = {"time": time.time(), "error": "",
+                                   "channel": getattr(channel, "name", "")}
 
     def _view_for(self, m: dict):
         return self._controls_view() if m.get("controls") else self._pad_view(m["pads"])
@@ -596,7 +669,10 @@ class Commands:
 
     async def clear_board(self) -> None:
         async with self._board_lock:
-            channel = self._board_channel()
+            try:
+                channel = await self._resolve_board_channel()
+            except Exception:
+                channel = None                       # canale sparito: basta dimenticarlo
             if channel is not None:
                 await self._delete_messages(channel, self.bot.board_messages)
             self.bot.set_board(0, [])
