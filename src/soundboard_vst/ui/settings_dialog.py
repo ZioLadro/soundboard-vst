@@ -184,6 +184,11 @@ class SettingsDialog(QDialog):
         self.bot_exclusive = QCheckBox("Con il bot in canale, i suoni non passano dal microfono virtuale")
         self.bot_exclusive.setToolTip("Evita che il canale senta i suoni due volte (dal bot e dal tuo microfono)")
         self.bot_exclusive.setChecked(bool(dc.get("exclusive", True)))
+        self.bot_continuous = QCheckBox("Bassa latenza: trasmissione continua")
+        self.bot_continuous.setToolTip(
+            "Il bot resta sempre in trasmissione (silenzio quando non suona niente): i suoni partono prima,\n"
+            "ma su Discord il bot può risultare sempre «attivo». Senza, va in pausa dopo mezzo secondo di silenzio.")
+        self.bot_continuous.setChecked(bool(dc.get("continuous", True)))
         sc = dc.get("shortcuts", {})
         self.bot_keys: dict[str, QKeySequenceEdit] = {}
         for name, label in (("toggle", "Avvia / ferma bot"), ("join", "Entra nel mio canale"),
@@ -196,7 +201,7 @@ class SettingsDialog(QDialog):
             kclear.clicked.connect(edit.clear)
             krow.addWidget(kclear)
             bform.addRow(f"Tasto: {label}", krow)
-        for cb in (self.bot_autostart, self.bot_follow, self.bot_exclusive):
+        for cb in (self.bot_autostart, self.bot_follow, self.bot_exclusive, self.bot_continuous):
             bform.addRow(cb)
         portal = QPushButton("Crea il bot…")
         portal.setToolTip("Apre il portale sviluppatori di Discord")
@@ -427,6 +432,7 @@ class SettingsDialog(QDialog):
             "autostart": self.bot_autostart.isChecked(),
             "follow": self.bot_follow.isChecked(),
             "exclusive": self.bot_exclusive.isChecked(),
+            "continuous": self.bot_continuous.isChecked(),
             "shortcuts": {k: e.keySequence().toString() for k, e in self.bot_keys.items()},
         }
         self.config.data["midi_map"] = self._map

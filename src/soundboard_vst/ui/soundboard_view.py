@@ -293,6 +293,7 @@ class SoundboardView(QWidget):
     play_requested = Signal(str, object)     # chiave, Path
     stop_requested = Signal()
     myinstants_requested = Signal()
+    sounds_reloaded = Signal()
     changed = Signal()
 
     def __init__(self, config: Config, cache: SoundCache, parent=None):
@@ -500,6 +501,7 @@ class SoundboardView(QWidget):
         self._rebuild_shortcuts()
         if layout_changed:
             self._save_layout()
+        self.sounds_reloaded.emit()
 
     def _refresh_library(self) -> None:
         self.library.clear()

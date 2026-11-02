@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import threading
+import time
 from dataclasses import dataclass
 from typing import Callable
 
@@ -21,7 +22,6 @@ DISCORD_SR = 48000
 FRAME = 960                          # 20 ms a 48 kHz
 FRAME_BYTES = FRAME * 2 * 2          # stereo, int16
 IDLE_FRAMES = 25                     # 0,5 s di silenzio prima di smettere di trasmettere
-PREBUFFER = FRAME * 2                # attende 40 ms di audio prima di partire
 INVITE_PERMISSIONS = (1 << 20) | (1 << 21)   # Connect + Speak
 
 _discord = None
@@ -83,16 +83,28 @@ def to_pcm(block: np.ndarray) -> bytes:
 class SoundboardSource:
     """Sorgente audio per discord.py (stessa interfaccia di ``discord.AudioSource``).
 
-    Legge 20 ms alla volta dal ring buffer del motore. Restituisce ``b""`` (fine della
-    trasmissione) dopo mezzo secondo di silenzio senza suoni attivi.
+    Il lettore di discord.py resta sempre aperto finché il bot è in canale: riavviarlo a ogni suono
+    costa centinaia di millisecondi. Quando non suona niente:
+    - in modalità continua trasmette silenzio (latenza minima, il bot può risultare sempre «attivo»);
+    - altrimenti, dopo mezzo secondo di silenzio, chiama ``on_idle`` (che mette in pausa il lettore).
+    All'inizio di ogni suono scarta l'audio accumulato nel buffer, così il ritardo resta minimo.
     """
 
-    def __init__(self, ring: RingBuffer, sample_rate: int, has_sounds: Callable[[], bool]):
+    KEEP = FRAME + FRAME // 2          # audio lasciato nel buffer dopo la risincronizzazione (30 ms)
+
+    def __init__(self, ring: RingBuffer, sample_rate: int, has_sounds: Callable[[], bool],
+                 is_continuous: Callable[[], bool] = lambda: False,
+                 on_idle: Callable[[], None] = lambda: None,
+                 on_latency: Callable[[float], None] = lambda ms: None):
         self.ring = ring
         self.sample_rate = sample_rate
         self.has_sounds = has_sounds
+        self.is_continuous = is_continuous
+        self.on_idle = on_idle
+        self.on_latency = on_latency
         self._idle = 0
-        self._started = False
+        self._resync = True
+        self._pending: float | None = None
         self.finished = False
 
     def is_opus(self) -> bool:
@@ -100,6 +112,12 @@ class SoundboardSource:
 
     def cleanup(self) -> None:
         self.finished = True
+
+    def mark(self, t0: float | None = None) -> None:
+        """Un suono è appena partito: risincronizza e misura quando arriva il primo audio."""
+        self._pending = t0
+        self._resync = True
+        self._idle = 0
 
     def _read_block(self) -> np.ndarray:
         if self.sample_rate == DISCORD_SR:
@@ -111,16 +129,24 @@ class SoundboardSource:
         return np.stack([np.interp(x_new, x_old, src[c]) for c in range(2)]).astype(np.float32)
 
     def read(self) -> bytes:
-        if not self._started:
-            if len(self.ring) < PREBUFFER and self.has_sounds():
-                return b"\x00" * FRAME_BYTES
-            self._started = True
+        if self.finished:
+            return b""
+        if self._resync:
+            keep = round(self.KEEP * self.sample_rate / DISCORD_SR)
+            excess = len(self.ring) - keep
+            if excess > 0:
+                self.ring.read(excess)       # scarta il ritardo accumulato
+            self._resync = False
         block = self._read_block()
-        if np.abs(block).max(initial=0.0) < 1e-4 and not self.has_sounds():
+        loud = np.abs(block).max(initial=0.0) >= 1e-4
+        if loud and self._pending is not None:
+            self.on_latency((time.perf_counter() - self._pending) * 1000.0)
+            self._pending = None
+        if not loud and not self.has_sounds() and not self.is_continuous():
             self._idle += 1
             if self._idle >= IDLE_FRAMES:
-                self.finished = True
-                return b""
+                self._idle = 0
+                self.on_idle()
         else:
             self._idle = 0
         return to_pcm(block)
@@ -165,6 +191,9 @@ class DiscordBot:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._source: SoundboardSource | None = None
+        self._vc = None
+        self.continuous = True          # trasmissione continua: latenza minima
+        self.last_latency_ms: float | None = None
         self.status = BotStatus()
 
     # Stato ------------------------------------------------------------------------
@@ -219,6 +248,9 @@ class DiscordBot:
                 else:
                     bot._set_status(channel=f"{after.channel.guild.name} › {after.channel.name}",
                                     conflict=False, message=f"Nel canale {after.channel.name}")
+                    if bot.continuous and before.channel is None:
+                        await asyncio.sleep(0.5)          # attende che la connessione voce sia pronta
+                        await bot._start_playing()
                 return
             if member.id != bot.owner_id or not bot.follow:
                 return
@@ -314,41 +346,71 @@ class DiscordBot:
 
     # Trasmissione ------------------------------------------------------------------------
     def notify_sound(self) -> None:
-        """Chiamato quando parte un suono: avvia la trasmissione se il bot è in un canale."""
+        """Chiamato quando parte un suono: avvia o riprende la trasmissione se il bot è in un canale."""
         if not self.running or not self.status.channel:
             return
-        if self._source is not None and not self._source.finished and self.engine.bot_streaming:
+        t0 = time.perf_counter()
+        source, vc = self._source, self._vc
+        if source is not None and not source.finished and vc is not None:
+            source.mark(t0)
+            if not self.engine.bot_streaming:
+                self.engine.bot_streaming = True
+                self._call(vc.resume)            # il lettore era in pausa: riparte subito
             return
         self.engine.bot_ring.clear()
         self.engine.bot_streaming = True
-        self._submit(self._start_playing())
+        self._submit(self._start_playing(t0))
 
-    async def _start_playing(self) -> None:
+    def _call(self, fn) -> None:
+        if self._loop is not None and self.running:
+            self._loop.call_soon_threadsafe(fn)
+
+    def _on_idle(self) -> None:
+        # chiamato dal thread del lettore: pausa (manda 5 frame di silenzio e smette di «parlare»)
+        self.engine.bot_streaming = False
+        vc = self._vc
+        if vc is not None:
+            vc.pause()
+
+    def _on_latency(self, ms: float) -> None:
+        self.last_latency_ms = ms
+
+    async def _start_playing(self, t0: float | None = None) -> None:
         vc = next((v for v in (self._client.voice_clients if self._client else []) if v.is_connected()), None)
         if vc is None:
             self.engine.bot_streaming = False
             return
-        if vc.is_playing():
+        if vc.is_playing() or vc.is_paused():
+            self._vc = vc
             return
-        source = SoundboardSource(self.engine.bot_ring, self.engine.sample_rate, self.engine.has_active_sounds)
-        self._source = source
+        source = SoundboardSource(self.engine.bot_ring, self.engine.sample_rate, self.engine.has_active_sounds,
+                                  is_continuous=lambda: self.continuous, on_idle=self._on_idle,
+                                  on_latency=self._on_latency)
+        source.mark(t0)
+        self._source, self._vc = source, vc
+        self.engine.bot_streaming = True
 
         def after(err):
             if self._source is source:
                 self.engine.bot_streaming = False
+                self._source = None
             if err:
                 self._set_status(message=f"Errore audio del bot: {err}")
 
         try:
-            vc.play(_wrap(source), after=after)
+            # «lowdelay» riduce il ritardo dell'encoder Opus; poca perdita attesa = meno ridondanza
+            vc.play(_wrap(source), after=after, application="lowdelay", bitrate=128,
+                    expected_packet_loss=0.05)
         except Exception as exc:
             self.engine.bot_streaming = False
+            self._source = None
             self._set_status(message=f"Errore audio del bot: {exc}")
 
     def _stop_streaming(self) -> None:
         self.engine.bot_streaming = False
         if self._source is not None:
             self._source.finished = True
+        self._source, self._vc = None, None
 
 
 def _wrap(source: SoundboardSource):

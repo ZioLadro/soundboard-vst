@@ -77,6 +77,7 @@ DEFAULTS: dict[str, Any] = {
         "autostart": False,
         "follow": True,
         "exclusive": True,       # con il bot in canale i suoni non passano dal cavo virtuale
+        "continuous": True,      # trasmissione continua: latenza minima (il bot può risultare sempre attivo)
         "shortcuts": {"toggle": "Ctrl+Alt+B", "join": "Ctrl+Alt+J", "leave": "Ctrl+Alt+L",
                       "follow": "Ctrl+Alt+F"},
     },

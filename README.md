@@ -125,7 +125,11 @@ disattiva «Segui me» (si cambiano in Impostazioni → Bot Discord). Si possono
 Note:
 - Il bot trasmette i canali **Soundboard** e **Player** del mixer (inserti e fader compresi), non il microfono; l'anteprima di MyInstants resta solo in cuffia.
 - Con «Con il bot in canale, i suoni non passano dal microfono virtuale» (attivo di default) il canale non sente i suoni due volte.
-- Il bot trasmette solo mentre suona qualcosa, quindi su Discord risulta «parlante» solo in quei momenti.
+- **Latenza**: con «Bassa latenza: trasmissione continua» (attiva di default) il bot resta sempre in trasmissione e
+  manda silenzio quando non suona niente, così i suoni partono subito (circa 20 ms di ritardo interno; il resto dipende
+  dalla rete e da Discord). Su Discord il bot può però risultare sempre «attivo». Disattivandola, il bot va in pausa
+  dopo mezzo secondo di silenzio e riparte alla pressione successiva (circa 40 ms interni, più l'avvio lato Discord).
+  Il menu 🤖 mostra l'ultima latenza interna misurata.
 - Usa discord.py 2.7 con il supporto alla crittografia end-to-end della voce (DAVE), obbligatoria su Discord.
 - Il token è salvato in chiaro in `%APPDATA%\SoundboardVST\config.json`: chi lo ha può controllare il bot, quindi non condividere quel file. Se il token esce per sbaglio, rigeneralo dal portale.
 

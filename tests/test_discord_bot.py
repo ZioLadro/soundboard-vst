@@ -1,4 +1,5 @@
 import base64
+import time
 from types import SimpleNamespace
 
 import numpy as np
@@ -33,18 +34,36 @@ def test_find_user_channel():
     assert find_user_channel(guilds, 99) is None
 
 
-def test_source_streams_then_stops_after_silence():
+def test_source_pauses_when_idle_instead_of_ending():
     ring = RingBuffer(2, 48000)
     active = {"on": True}
-    src = SoundboardSource(ring, 48000, lambda: active["on"])
-    assert src.read() == b"\x00" * FRAME_BYTES      # pre-buffer
+    idle = []
+    src = SoundboardSource(ring, 48000, lambda: active["on"], on_idle=lambda: idle.append(1))
     ring.write(np.full((2, FRAME * 3), 0.25, np.float32))
     frame = src.read()
     assert len(frame) == FRAME_BYTES
     assert np.frombuffer(frame, "<i2")[0] == int(0.25 * 32767)
     active["on"] = False
-    frames = [src.read() for _ in range(IDLE_FRAMES + 2)]
-    assert b"" in frames and src.finished
+    frames = [src.read() for _ in range(IDLE_FRAMES + 3)]
+    assert b"" not in frames and idle == [1]          # pausa, non fine del flusso
+    src.cleanup()
+    assert src.read() == b""
+
+
+def test_source_continuous_never_idles_and_resyncs_backlog():
+    ring = RingBuffer(2, 48000)
+    idle, lat = [], []
+    src = SoundboardSource(ring, 48000, lambda: False, is_continuous=lambda: True,
+                           on_idle=lambda: idle.append(1), on_latency=lat.append)
+    for _ in range(IDLE_FRAMES * 2):
+        src.read()
+    assert idle == []
+    ring.write(np.zeros((2, 4000), np.float32))        # silenzio accumulato (deriva dei clock)
+    ring.write(np.full((2, 960), 0.5, np.float32))     # poi parte un suono
+    src.mark(time.perf_counter())
+    first = np.frombuffer(src.read(), "<i2")
+    assert len(ring) <= SoundboardSource.KEEP          # ritardo scartato
+    assert first.any() and len(lat) == 1 and lat[0] < 1000
 
 
 def test_source_resamples_from_44100():

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QObject, Qt, QTimer, QUrl, Signal
@@ -88,6 +89,7 @@ class MainWindow(QMainWindow):
         self.board.stop_requested.connect(self.engine.stop_sounds)
         self.board.myinstants_requested.connect(self.open_myinstants)
         self.board.changed.connect(self.schedule_save)
+        self.board.sounds_reloaded.connect(self.preload_sounds)
 
         self.mixer = MixerView(self.engine, self.vst_plugins, self.rescan_vst)
         self.mixer.changed.connect(self.schedule_save)
@@ -146,6 +148,7 @@ class MainWindow(QMainWindow):
         self.midi_bridge.event.connect(self._on_midi)
         self.midi_in = midi.MidiInput()
         self.board.midi_bridge = self.midi_bridge
+        QTimer.singleShot(0, self.preload_sounds)
         if autostart:
             QTimer.singleShot(0, self.first_start)
             QTimer.singleShot(0, self.open_midi)
@@ -224,6 +227,21 @@ class MainWindow(QMainWindow):
     def _show_status(self, text: str) -> None:
         self.route_label.setText(text)
 
+    def preload_sounds(self) -> None:
+        """Decodifica in anticipo i suoni dei pad, così la prima pressione non aspetta la decodifica."""
+        paths = [self.board.path_for(k) for pg in self.board.layout_model.pages for k in pg.slots.values()]
+        cache = self.cache
+
+        def run():
+            for p in paths:
+                try:
+                    if p.exists():
+                        cache.get(p)
+                except Exception:
+                    pass
+
+        threading.Thread(target=run, name="preload-sounds", daemon=True).start()
+
     def play_sound(self, key: str, path: Path, scale: float = 1.0) -> None:
         if not self.engine.status.running:
             self.statusBar().showMessage("Audio fermo: premi «Avvia audio».", 4000)
@@ -248,6 +266,7 @@ class MainWindow(QMainWindow):
             owner = int(dc.get("owner_id") or 0)
         except ValueError:
             owner = 0
+        self.bot.continuous = bool(dc.get("continuous", True))
         self.bot.start(dc["token"], owner, dc.get("follow", True))
 
     def toggle_bot(self) -> None:
@@ -319,6 +338,10 @@ class MainWindow(QMainWindow):
             leave.setEnabled(bool(st.channel))
             m.addSeparator()
             m.addAction("Ferma il bot", self.bot.stop)
+            if self.bot.last_latency_ms is not None:
+                info = m.addAction(f"Ultima latenza interna: {self.bot.last_latency_ms:.0f} ms "
+                                   "(+ rete e Discord di chi ascolta)")
+                info.setEnabled(False)
         else:
             m.addAction("Avvia il bot", self.start_bot)
         m.addSeparator()
@@ -495,6 +518,7 @@ class MainWindow(QMainWindow):
                 self.start_bot()
             else:
                 self.bot.follow = dc.get("follow", True)
+                self.bot.continuous = bool(dc.get("continuous", True))
                 self._update_exclusive()
             self.config.save()
             self._vst_cache = None

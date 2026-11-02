@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.1 — 2026-11-02
+
+### Correzioni
+- Latenza del bot ridotta da circa 1,5 s: il lettore di discord.py non viene più riavviato a ogni suono
+  (resta aperto e va in pausa/riprende), all'inizio di ogni suono si scarta l'audio accumulato nel buffer,
+  l'encoder Opus usa la modalità «lowdelay». Latenza interna misurata: ~20 ms (trasmissione continua) o ~40 ms.
+- Nuova opzione «Bassa latenza: trasmissione continua» (attiva di default) nelle impostazioni del bot.
+- I suoni dei pad vengono decodificati in anticipo: anche la prima pressione parte subito.
+- Il menu del bot mostra l'ultima latenza interna misurata.
+
 ## v0.4.0 — 2026-11-02
 
 ### Novità
