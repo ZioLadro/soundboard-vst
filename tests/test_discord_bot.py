@@ -174,3 +174,68 @@ def test_dave_compatibility_check():
     assert dave_compatible(davey_old, gw_old)
     assert not dave_compatible(davey_new, gw_old)             # il caso della build 0.6.1
     assert dave_compatible(davey_new, gw_new)                 # un discord.py futuro che lo supporta
+
+
+# Stato del bot («Ascolta …») -----------------------------------------------------------------
+def test_presence_text_follows_player():
+    from soundboard_vst.discord_bot import PRESENCE_MAX, presence_text
+
+    def st(state, title):
+        return {"player": {"state": state, "title": title}}
+
+    assert presence_text(st("playing", "  Daft   Punk - One More Time ")) == "Daft Punk - One More Time"
+    assert presence_text(st("loading", "Video YouTube")) == "Video YouTube"      # in download: sta per partire
+    assert presence_text(st("paused", "x")) is None and presence_text(st("stopped", "x")) is None
+    assert presence_text(st("playing", "")) is None and presence_text({}) is None
+    long = presence_text(st("playing", "a" * 300))
+    assert len(long) == PRESENCE_MAX and long.endswith("…")
+
+
+def test_presence_loop_throttles_and_clears(monkeypatch):
+    import asyncio
+
+    import discord
+
+    from soundboard_vst import discord_bot as db
+
+    monkeypatch.setattr(db, "PRESENCE_POLL_S", 0.01)
+    monkeypatch.setattr(db, "PRESENCE_MIN_INTERVAL_S", 0.2)
+    state = {"player": {"state": "playing", "title": "Primo"}}
+    bot = db.DiscordBot(AudioEngine(48000, 512), lambda s: None, get_state=lambda: state)
+    calls = []
+
+    class Client:
+        closed = False
+
+        def is_closed(self):
+            return self.closed
+
+        async def change_presence(self, activity=None):
+            calls.append((time.monotonic(), activity))
+
+    bot._client = client = Client()
+
+    async def scenario():
+        task = asyncio.get_running_loop().create_task(bot._presence_loop())
+        await asyncio.sleep(0.05)
+        state["player"]["title"] = "Secondo"                  # cambia subito: deve aspettare il limite
+        await asyncio.sleep(0.05)
+        state["player"]["title"] = "Terzo"                    # ancora dentro i 0,2 s: vince l'ultimo
+        await asyncio.sleep(0.3)
+        state["player"]["state"] = "paused"                   # in pausa: stato vuoto
+        await asyncio.sleep(0.3)
+        bot.show_presence = False
+        bot._presence_dirty = True                            # come dopo una riconnessione: rimandato
+        await asyncio.sleep(0.3)
+        client.closed = True
+        await asyncio.sleep(0.03)
+        await task
+
+    asyncio.run(scenario())
+    names = [a.name if a else None for _, a in calls]
+    assert names[0] == "Primo" and "Secondo" not in names     # saltato: è arrivato prima del limite
+    assert names[1] == "Terzo" and names[2] is None and names[-1] is None
+    a = calls[0][1]
+    assert isinstance(a, discord.Activity) and a.type is discord.ActivityType.listening
+    gaps = [b[0] - a[0] for a, b in zip(calls, calls[1:])]
+    assert min(gaps) >= 0.2 - 0.01                            # mai più spesso del limite di Discord

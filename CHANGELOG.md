@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.7.2 — 2026-11-02
+
+### Novità
+- **Stato del bot su Discord**: mentre il player suona, il bot mostra «Ascolta *titolo del brano*» (anche per i
+  video di YouTube); in pausa o fermo lo stato sparisce. Si disattiva in Impostazioni → Bot Discord. Discord non
+  permette ai bot la «Rich Presence» completa (copertina, barra di avanzamento, pulsanti): un bot può mostrare
+  solo una riga di testo, e cambiarla al massimo ogni 15 secondi circa.
+
 ## v0.7.1 — 2026-11-02
 
 ### Novità

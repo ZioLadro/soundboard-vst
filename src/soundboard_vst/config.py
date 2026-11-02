@@ -79,6 +79,7 @@ DEFAULTS: dict[str, Any] = {
         "follow": True,
         "exclusive": True,       # con il bot in canale i suoni non passano dal cavo virtuale
         "continuous": True,      # trasmissione continua: latenza minima (il bot può risultare sempre attivo)
+        "presence": True,        # stato del bot: «Ascolta <brano del player>»
         "shortcuts": {"toggle": "Ctrl+Alt+B", "join": "Ctrl+Alt+J", "leave": "Ctrl+Alt+L",
                       "follow": "Ctrl+Alt+F"},
         "commands": {                # comandi slash e pulsantiera su Discord

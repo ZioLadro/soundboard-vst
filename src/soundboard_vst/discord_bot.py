@@ -91,6 +91,23 @@ def dave_compatible(davey_mod=None, gateway_mod=None) -> bool:
     return "prepare_transition" in _code_names(gateway_mod)
 
 
+# Stato del bot («Ascolta …») --------------------------------------------------------------------
+PRESENCE_POLL_S = 2.0           # ogni quanto si guarda cosa suona il player
+PRESENCE_MIN_INTERVAL_S = 15.0  # Discord limita i cambi di stato: al massimo uno ogni 15 s
+PRESENCE_MAX = 128              # lunghezza massima del testo dello stato
+
+
+def presence_text(state: dict) -> str | None:
+    """Cosa mostrare nello stato del bot: il brano del player se sta suonando, altrimenti niente."""
+    p = state.get("player") or {}
+    if p.get("state") not in ("playing", "loading"):
+        return None
+    title = " ".join(str(p.get("title") or "").split())
+    if not title:
+        return None
+    return title if len(title) <= PRESENCE_MAX else title[:PRESENCE_MAX - 1] + "…"
+
+
 def application_id_from_token(token: str) -> int | None:
     """La prima parte del token di un bot è l'ID del bot (che coincide con l'ID dell'applicazione)."""
     try:
@@ -253,6 +270,9 @@ class DiscordBot:
         self.board_channel: int = 0        # canale dedicato alla pulsantiera (0 = nessuno)
         self.board_messages: list[int] = []
         self.board_info: dict = {}          # ultimo aggiornamento del canale dedicato: {"time", "error", "channel"}
+        self.show_presence = True           # stato del bot su Discord: «Ascolta <brano del player>»
+        self._presence_task = None
+        self._presence_dirty = True         # da rimandare (es. dopo una riconnessione)
         self._commands = None
         self.owner_id: int = 0
         self.follow = True
@@ -318,10 +338,13 @@ class DiscordBot:
             synced.update(g.id for g in todo)
             await commands.sync(todo)
             commands.start_board_loop()
+            bot._presence_dirty = True       # dopo una nuova sessione lo stato va rimandato
+            bot._start_presence_loop()
 
         @client.event
         async def on_resumed():
             commands.start_board_loop()      # se dopo un'interruzione si fosse fermato, riparte
+            bot._start_presence_loop()
 
         @client.event
         async def on_guild_join(guild):
@@ -405,6 +428,29 @@ class DiscordBot:
             asyncio.run_coroutine_threadsafe(coro, self._loop)
         else:
             coro.close()
+
+    # Stato su Discord ---------------------------------------------------------------------------
+    def _start_presence_loop(self) -> None:
+        if self._presence_task is None or self._presence_task.done():
+            self._presence_task = asyncio.get_running_loop().create_task(self._presence_loop())
+
+    async def _presence_loop(self) -> None:
+        """Segue il player: «Ascolta <titolo>» mentre suona, niente quando è fermo o in pausa."""
+        discord = _lib()
+        client = self._client
+        sent: str | None = None
+        last = -PRESENCE_MIN_INTERVAL_S
+        while client is not None and not client.is_closed():
+            want = presence_text(self.get_state()) if self.show_presence else None
+            now = time.monotonic()
+            if (want != sent or self._presence_dirty) and now - last >= PRESENCE_MIN_INTERVAL_S:
+                activity = discord.Activity(type=discord.ActivityType.listening, name=want) if want else None
+                try:
+                    await client.change_presence(activity=activity)
+                    sent, last, self._presence_dirty = want, now, False
+                except Exception:
+                    last = now                      # riprova al prossimo giro utile
+            await asyncio.sleep(PRESENCE_POLL_S)
 
     def refresh_board(self) -> None:
         """Ripubblica/aggiorna subito la pulsantiera nel canale dedicato (dal menu del bot)."""
