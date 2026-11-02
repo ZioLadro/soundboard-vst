@@ -31,8 +31,9 @@ from .ui.soundboard_view import SoundboardView
 
 
 class BotSignals(QObject):
-    """Riporta gli stati del bot (thread di discord.py) nel thread dell'interfaccia."""
+    """Riporta stati ed eventi del bot (thread di discord.py) nel thread dell'interfaccia."""
     status = Signal(object)
+    board = Signal(int, object)      # canale dedicato alla pulsantiera e ID dei suoi messaggi
 
 
 class MainWindow(QMainWindow):
@@ -143,7 +144,12 @@ class MainWindow(QMainWindow):
         self._bot_conflict_shown = False
         self.bot_signals = BotSignals()
         self.bot_signals.status.connect(self._on_bot_status)
-        self.bot = DiscordBot(self.engine, self.bot_signals.status.emit)
+        self.bot_signals.board.connect(self._on_bot_board)
+        # i comandi da Discord passano dallo stesso controller del controllo remoto (creato sotto)
+        self.bot = DiscordBot(self.engine, self.bot_signals.status.emit,
+                              get_state=lambda: self.remote.state,
+                              send_command=lambda c: self.remote.command.emit(c),
+                              on_board=self.bot_signals.board.emit)
         self.player_view.started.connect(self.bot.notify_sound)
         self._settings_dialog = None
         self._shortcuts: list[QShortcut] = []
@@ -275,12 +281,25 @@ class MainWindow(QMainWindow):
         except ValueError:
             owner = 0
         self.bot.continuous = bool(dc.get("continuous", True))
+        self.bot.commands_cfg = dict(dc.get("commands", {}))
+        try:
+            self.bot.board_channel = int(dc.get("board_channel") or 0)
+            self.bot.board_messages = [int(m) for m in dc.get("board_messages") or []]
+        except (TypeError, ValueError):
+            self.bot.board_channel, self.bot.board_messages = 0, []
         self.bot.start(dc["token"], owner, dc.get("follow", True))
+        self.remote.update_timer()
+
+    def _on_bot_board(self, channel_id: int, message_ids) -> None:
+        dc = self.config.data["discord"]
+        dc["board_channel"], dc["board_messages"] = channel_id, list(message_ids)
+        self.schedule_save()
 
     def toggle_bot(self) -> None:
         if self.bot.running:
             self.bot.stop()
             self._update_bot_buttons()
+            self.remote.update_timer()
         else:
             self.start_bot()
 
@@ -391,6 +410,7 @@ class MainWindow(QMainWindow):
             text = "🤖  Bot già in uso"
         self.bot_btn.setText(text)
         self.bot_btn.setToolTip(st.message)
+        self.remote.update_timer()
         self._update_bot_buttons()
         if st.conflict and not self._bot_conflict_shown:
             self._bot_conflict_shown = True
@@ -551,6 +571,11 @@ class MainWindow(QMainWindow):
                 self.bot.follow = dc.get("follow", True)
                 self.bot.continuous = bool(dc.get("continuous", True))
                 self._update_exclusive()
+                if dc.get("commands") != old_bot.get("commands"):
+                    was_enabled = bool(self.bot.commands_cfg.get("enabled", True))
+                    self.bot.commands_cfg = dict(dc.get("commands", {}))
+                    if was_enabled != bool(self.bot.commands_cfg.get("enabled", True)):
+                        self.bot.resync_commands()      # registra o toglie i comandi nei server
             self.config.save()
             self._vst_cache = None
             # riavvia audio e MIDI solo se sono cambiati (un riavvio interrompe per un attimo anche il bot)

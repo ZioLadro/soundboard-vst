@@ -69,8 +69,8 @@ DEFAULTS: dict[str, Any] = {
     "vst3_dirs": [],             # vuoto = cartelle standard
     "overlap_sounds": True,
     "midi": {"input": "", "velocity": False},
-    "midi_map": {},
-    "remote": {"enabled": False, "port": 8765, "token": ""},   # controllo da browser              # destinazione (es. "strip:mic:gain") -> controllo MIDI
+    "midi_map": {},              # destinazione (es. "strip:mic:gain") -> controllo MIDI
+    "remote": {"enabled": False, "port": 8765, "token": ""},   # controllo da browser
     "player": {},                # coda, brano corrente, ripetizione, casuale
     "discord": {
         "token": "",             # token del bot (salvato in chiaro: non condividere il file)
@@ -81,6 +81,14 @@ DEFAULTS: dict[str, Any] = {
         "continuous": True,      # trasmissione continua: latenza minima (il bot può risultare sempre attivo)
         "shortcuts": {"toggle": "Ctrl+Alt+B", "join": "Ctrl+Alt+J", "leave": "Ctrl+Alt+L",
                       "follow": "Ctrl+Alt+F"},
+        "commands": {                # comandi slash e pulsantiera su Discord
+            "enabled": True,
+            "sounds_access": "everyone",   # suonare e fermare i suoni: owner / role / everyone
+            "control_access": "owner",     # entra/esci, player, volume, canale dedicato
+            "role": "",                    # nome o ID del ruolo per il livello «role»
+        },
+        "board_channel": 0,          # canale dedicato alla pulsantiera (ID), 0 = nessuno
+        "board_messages": [],        # messaggi della pulsantiera in quel canale
     },
     "sounds": {},                # nome file -> {"volume": float, "shortcut": str}
     "mixer": {},                 # id canale -> stato (fader, mute, inserti...)

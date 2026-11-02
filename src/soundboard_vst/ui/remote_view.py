@@ -17,7 +17,10 @@ from . import theme
 
 
 class RemoteController(QObject):
-    """Prepara l'istantanea dello stato sul thread della GUI ed esegue lì i comandi in arrivo."""
+    """Prepara l'istantanea dello stato sul thread della GUI ed esegue lì i comandi in arrivo.
+
+    La usano sia la pagina web sia il bot Discord (comandi slash e pulsantiera).
+    """
 
     command = Signal(object)
     status_changed = Signal()
@@ -45,6 +48,10 @@ class RemoteController(QObject):
                 pass
         return self.cfg["token"]
 
+    @property
+    def state(self) -> dict:
+        return self._state
+
     def apply(self) -> None:
         """Avvia o ferma il server secondo le impostazioni."""
         if self.cfg.get("enabled"):
@@ -53,11 +60,19 @@ class RemoteController(QObject):
             if not (self.server.running and self.server.port == port and self.server.token == token):
                 self._snapshot()
                 self.server.start(port, token)
-            self._timer.start()
         else:
             self.server.stop()
-            self._timer.stop()
+        self.update_timer()
         self.status_changed.emit()
+
+    def update_timer(self) -> None:
+        """L'istantanea serve finché è attivo il controllo da browser o il bot Discord."""
+        if self.cfg.get("enabled") or self.w.bot.running:
+            if not self._timer.isActive():
+                self._snapshot()
+                self._timer.start()
+        else:
+            self._timer.stop()
 
     def urls(self) -> list[tuple[str, str]]:
         """(descrizione, link completo di chiave) per ogni indirizzo del PC."""
@@ -97,6 +112,10 @@ class RemoteController(QObject):
                         "playing": key in playing, "missing": key not in existing,
                     }
             pages.append({"name": pg.name, "pads": pads})
+        library = []
+        for key in board._keys:
+            c = sounds.get(key, {})
+            library.append({"key": key, "label": c.get("label") or Path(key).stem, "emoji": c.get("emoji", "")})
         p = eng.player
         cur = p.current
         bot = w.bot
@@ -114,6 +133,7 @@ class RemoteController(QObject):
             "bot": {"available": discord_bot.available(), "running": bot.running, "online": bot.status.online,
                     "channel": bot.status.channel, "message": bot.status.message},
             "audio": {"running": eng.status.running},
+            "library": library,       # tutti i suoni della cartella (per /suona su Discord)
         }
 
     # Comandi --------------------------------------------------------------------------------
@@ -125,6 +145,10 @@ class RemoteController(QObject):
                 w.board.play_page_slot(int(c.get("page", 0)), int(c.get("index", -1)))
             elif cmd == "page":
                 w.board.pages.setCurrentIndex(int(c.get("index", 0)))
+            elif cmd == "sound":
+                key = str(c.get("key", ""))
+                if key in w.board._keys:          # solo file della cartella dei suoni
+                    w.board.play_key(key, quiet=True)
             elif cmd == "stop_sounds":
                 w.engine.stop_sounds()
             elif cmd == "player":

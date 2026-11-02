@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.6.0 — 2026-11-02
+
+### Novità
+- **Comandi slash del bot Discord**: `/suona` (con suggerimenti mentre scrivi, cerca in tutta la cartella),
+  `/stop`, `/pulsantiera`, `/canale-pulsantiera`, `/entra` (nel canale di chi lo scrive), `/esci`, `/player`,
+  `/riproduci` (link o ricerca YouTube), `/volume` e `/aiuto`.
+- **Pulsantiera nei messaggi**: `/pulsantiera` pubblica i pad come pulsanti (20 per volta, con i colori dei pad,
+  frecce per scorrere pagine e blocchi, «Stop suoni» e aggiorna). Può essere visibile solo a te.
+- **Canale dedicato**: `/canale-pulsantiera qui` fa tenere al bot tutti i pad in quel canale, 25 per messaggio,
+  più una riga con stop e comandi del player. I messaggi si aggiornano da soli quando cambi i pad.
+- I pulsanti continuano a funzionare dopo un riavvio della soundboard, senza ripubblicare nulla.
+- **Permessi** in Impostazioni → Bot Discord: chi può suonare e chi può controllare (solo io, un ruolo, chiunque
+  nel server). Il proprietario può sempre tutto. Predefinito: suonano tutti, controlli solo il proprietario.
+- Link d'invito aggiornato con i comandi e i permessi per scrivere nel canale dedicato: i bot già invitati vanno
+  invitati di nuovo.
+
+### Correzioni
+- Le impostazioni del bot non cancellano più le chiavi che il dialogo non gestisce.
+
 ## v0.5.0 — 2026-11-02
 
 ### Novità

@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 from .. import discord_bot, midi, midi_map
 from ..audio import devices
 from ..config import Config, default_vst3_dirs
+from ..discord_commands import ACCESS_EVERYONE, ACCESS_LABELS, ACCESS_OWNER, ACCESS_ROLE
 from . import theme
 
 NONE_LABEL = "— nessuno —"
@@ -203,6 +204,40 @@ class SettingsDialog(QDialog):
             bform.addRow(f"Tasto: {label}", krow)
         for cb in (self.bot_autostart, self.bot_follow, self.bot_exclusive, self.bot_continuous):
             bform.addRow(cb)
+
+        cm = dc.get("commands", {})
+        self.cmd_enabled = QCheckBox("Comandi da Discord: /suona, /pulsantiera, /canale-pulsantiera, /player…")
+        self.cmd_enabled.setChecked(bool(cm.get("enabled", True)))
+        bform.addRow(self.cmd_enabled)
+        self.cmd_sounds = QComboBox()
+        self.cmd_control = QComboBox()
+        for combo, key, default in ((self.cmd_sounds, "sounds_access", ACCESS_EVERYONE),
+                                    (self.cmd_control, "control_access", ACCESS_OWNER)):
+            for value, label in ACCESS_LABELS.items():
+                combo.addItem(label, value)
+            idx = combo.findData(cm.get(key, default))
+            combo.setCurrentIndex(max(0, idx))
+        self.cmd_sounds.setToolTip("Suonare i pad, /suona, /stop, /pulsantiera")
+        self.cmd_control.setToolTip("/entra, /esci, /player, /riproduci, /volume, /canale-pulsantiera")
+        bform.addRow("Chi può suonare", self.cmd_sounds)
+        bform.addRow("Chi può controllare", self.cmd_control)
+        self.cmd_role = QLineEdit(cm.get("role", ""))
+        self.cmd_role.setPlaceholderText("Nome o ID del ruolo, es. Soundboard")
+        bform.addRow("Ruolo", self.cmd_role)
+        update_role = lambda: self.cmd_role.setEnabled(ACCESS_ROLE in (self.cmd_sounds.currentData(),
+                                                                       self.cmd_control.currentData()))
+        self.cmd_sounds.currentIndexChanged.connect(update_role)
+        self.cmd_control.currentIndexChanged.connect(update_role)
+        update_role()
+        cmd_hint = QLabel(
+            "Scrivi <b>/pulsantiera</b> in un canale di testo per avere i pad come pulsanti, oppure "
+            "<b>/canale-pulsantiera</b> in un canale dedicato: il bot ci tiene tutti i pad, aggiornati da soli. "
+            "Tu (il tuo ID utente) puoi sempre usare tutti i comandi. Se il bot era già nel server prima di "
+            "questa versione, invitalo di nuovo con il pulsante qui sotto per abilitare i comandi.")
+        cmd_hint.setWordWrap(True)
+        cmd_hint.setTextFormat(Qt.TextFormat.RichText)
+        cmd_hint.setStyleSheet(f"color: {theme.MUTED};")
+        bform.addRow(cmd_hint)
         portal = QPushButton("Crea il bot…")
         portal.setToolTip("Apre il portale sviluppatori di Discord")
         portal.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://discord.com/developers/applications")))
@@ -469,7 +504,8 @@ class SettingsDialog(QDialog):
         a["monitor_output"] = self.monitor.currentData() or ""
         a["sample_rate"] = int(self.sample_rate.currentData())
         a["block_size"] = int(self.block.currentData())
-        self.config.data["discord"] = {
+        # aggiorna senza sostituire: restano le chiavi che il dialogo non gestisce (es. canale dedicato)
+        self.config.data["discord"].update({
             "token": self.bot_token.text().strip(),
             "owner_id": self.bot_owner.text().strip(),
             "autostart": self.bot_autostart.isChecked(),
@@ -477,7 +513,13 @@ class SettingsDialog(QDialog):
             "exclusive": self.bot_exclusive.isChecked(),
             "continuous": self.bot_continuous.isChecked(),
             "shortcuts": {k: e.keySequence().toString() for k, e in self.bot_keys.items()},
-        }
+            "commands": {
+                "enabled": self.cmd_enabled.isChecked(),
+                "sounds_access": self.cmd_sounds.currentData(),
+                "control_access": self.cmd_control.currentData(),
+                "role": self.cmd_role.text().strip(),
+            },
+        })
         self.config.data["midi_map"] = self._map
         self.config.data["remote"] = {"enabled": self.remote_enabled.isChecked(),
                                       "port": self.remote_port.value(), "token": self._remote_token}
