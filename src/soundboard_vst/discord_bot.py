@@ -18,7 +18,7 @@ from typing import Callable
 
 import numpy as np
 
-from .audio.ringbuffer import RingBuffer
+from .audio.ringbuffer import DriftReader, RingBuffer
 
 DISCORD_SR = 48000
 FRAME = 960                          # 20 ms a 48 kHz
@@ -91,9 +91,14 @@ class SoundboardSource:
     - in modalità continua trasmette silenzio (latenza minima, il bot può risultare sempre «attivo»);
     - altrimenti, dopo mezzo secondo di silenzio, chiama ``on_idle`` (che mette in pausa il lettore).
     All'inizio di ogni suono scarta l'audio accumulato nel buffer, così il ritardo resta minimo.
+
+    Il motore scrive con il clock della scheda audio, discord.py legge con quello del PC: un
+    ``DriftReader`` tiene il buffer intorno a ``KEEP`` (e converte la frequenza se non è 48 kHz),
+    così la musica lunga del player non fa scatti né buchi.
     """
 
-    KEEP = FRAME + FRAME // 2          # audio lasciato nel buffer dopo la risincronizzazione (30 ms)
+    KEEP = FRAME * 2                   # audio tenuto nel buffer (40 ms a 48 kHz)
+    QUIET_FRAMES = 3                   # si risincronizza solo dopo almeno 60 ms di silenzio
 
     def __init__(self, ring: RingBuffer, sample_rate, has_sounds: Callable[[], bool],
                  is_continuous: Callable[[], bool] = lambda: False,
@@ -109,6 +114,8 @@ class SoundboardSource:
         self._resync = True
         self._pending: float | None = None
         self.finished = False
+        self._quiet = self.QUIET_FRAMES          # frame silenziosi di fila (all'inizio: silenzio)
+        self._reader = DriftReader(ring, self._keep(), self.sample_rate / DISCORD_SR)
 
     @property
     def sample_rate(self) -> int:
@@ -126,26 +133,28 @@ class SoundboardSource:
         self._resync = True
         self._idle = 0
 
-    def _read_block(self) -> np.ndarray:
-        if self.sample_rate == DISCORD_SR:
-            return self.ring.read(FRAME)
-        n = max(1, round(FRAME * self.sample_rate / DISCORD_SR))
-        src = self.ring.read(n)
-        x_old = np.linspace(0.0, 1.0, n, endpoint=False)
-        x_new = np.linspace(0.0, 1.0, FRAME, endpoint=False)
-        return np.stack([np.interp(x_new, x_old, src[c]) for c in range(2)]).astype(np.float32)
+    def _keep(self) -> int:
+        return round(self.KEEP * self.sample_rate / DISCORD_SR)       # in campioni del motore
 
     def read(self) -> bytes:
         if self.finished:
             return b""
+        reader = self._reader
         if self._resync:
-            keep = round(self.KEEP * self.sample_rate / DISCORD_SR)
-            excess = len(self.ring) - keep
-            if excess > 0:
-                self.ring.read(excess)       # scarta il ritardo accumulato
+            keep = self._keep()
+            reader.target = keep
+            reader.ratio = self.sample_rate / DISCORD_SR
+            # se sta già suonando qualcosa (es. la musica del player) non si taglia niente: il buffer
+            # è già al livello giusto e scartarne un pezzo farebbe uno scatto in mezzo alla musica
+            if self._quiet >= self.QUIET_FRAMES:
+                excess = len(self.ring) - keep
+                if excess > 0:
+                    self.ring.read(excess)       # scarta il ritardo accumulato (era silenzio)
+                reader.reset()
             self._resync = False
-        block = self._read_block()
+        block = reader.read(FRAME)
         loud = np.abs(block).max(initial=0.0) >= 1e-4
+        self._quiet = 0 if loud else self._quiet + 1
         if loud and self._pending is not None:
             self.on_latency((time.perf_counter() - self._pending) * 1000.0)
             self._pending = None

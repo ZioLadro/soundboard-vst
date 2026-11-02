@@ -10,7 +10,8 @@ Flusso del segnale::
 
 Lo stream di uscita "virtuale" fa da clock: nella sua callback viene
 calcolato tutto il mix. Microfono e cuffie stanno su stream separati
-(spesso schede diverse, con clock diversi) collegati da ring buffer.
+(spesso schede diverse, con clock diversi) collegati da ring buffer, letti con
+``DriftReader`` che compensa la differenza di velocità tra le schede.
 """
 
 from __future__ import annotations
@@ -24,7 +25,13 @@ import numpy as np
 from . import devices
 from .mixer import ChannelStrip
 from .player import Player
-from .ringbuffer import RingBuffer
+from .ringbuffer import DriftReader, RingBuffer
+
+
+# Buffer tra schede con clock diversi (microfono → mix, mix → cuffie), in blocchi audio:
+# livello a cui li tiene DriftReader e massimo prima di scartare audio.
+RING_TARGET_BLOCKS = 3
+RING_MAX_BLOCKS = 8
 
 
 @dataclass
@@ -71,9 +78,10 @@ class AudioEngine:
         self._voices: list[Voice] = []
         self._voices_lock = threading.Lock()
 
-        latency = block_size * 4
-        self._mic_ring = RingBuffer(2, sample_rate, max_latency=latency)
-        self._monitor_ring = RingBuffer(2, sample_rate, max_latency=latency)
+        self._mic_ring = RingBuffer(2, sample_rate, max_latency=block_size * RING_MAX_BLOCKS)
+        self._monitor_ring = RingBuffer(2, sample_rate, max_latency=block_size * RING_MAX_BLOCKS)
+        self._mic_reader = DriftReader(self._mic_ring, block_size * RING_TARGET_BLOCKS)
+        self._monitor_reader = DriftReader(self._monitor_ring, block_size * RING_TARGET_BLOCKS)
 
         self._streams: list = []
         self._clock_is_virtual = True
@@ -139,7 +147,7 @@ class AudioEngine:
         """Calcola un blocco: restituisce (uscita verso Discord, uscita monitor)."""
         sr = self.sample_rate
         if mic_block is None:
-            mic_block = self._mic_ring.read(frames) if self._has_input \
+            mic_block = self._mic_reader.read(frames) if self._has_input \
                 else np.zeros((2, frames), dtype=np.float32)
 
         mic = self.mic.process(mic_block, sr)
@@ -190,7 +198,7 @@ class AudioEngine:
     def _monitor_cb(self, outdata, frames, time, status):
         if status:
             self.xruns += 1
-        _write_out(outdata, self._monitor_ring.read(frames))
+        _write_out(outdata, self._monitor_reader.read(frames))
 
     # Avvio / arresto ---------------------------------------------------------------
     def start(self, host_api: str, input_name: str, virtual_name: str, monitor_name: str) -> EngineStatus:
@@ -225,6 +233,8 @@ class AudioEngine:
         self._has_monitor_stream = virt is not None and mon is not None
         self._mic_ring.clear()
         self._monitor_ring.clear()
+        self._mic_reader.reset()
+        self._monitor_reader.reset()
         extra = devices.wasapi_extra(host_api)
         common = dict(samplerate=self.sample_rate, blocksize=self.block_size,
                       dtype="float32", latency="low", extra_settings=extra)
@@ -277,10 +287,12 @@ class AudioEngine:
             self.player.sample_rate = self.sample_rate
         changed = int(block_size) != self.block_size or self._mic_ring.capacity != self.sample_rate
         self.block_size = int(block_size)
-        latency = self.block_size * 4
         # stessi oggetti: il bot Discord tiene un riferimento al proprio buffer
-        self._mic_ring.reconfigure(self.sample_rate, latency)
-        self._monitor_ring.reconfigure(self.sample_rate, latency)
+        self._mic_ring.reconfigure(self.sample_rate, self.block_size * RING_MAX_BLOCKS)
+        self._monitor_ring.reconfigure(self.sample_rate, self.block_size * RING_MAX_BLOCKS)
+        for reader in (self._mic_reader, self._monitor_reader):
+            reader.target = self.block_size * RING_TARGET_BLOCKS
+            reader.reset()
         self.bot_ring.reconfigure(self.sample_rate, int(self.sample_rate * 0.12))
         if not changed:
             return
