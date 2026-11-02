@@ -1,4 +1,8 @@
-"""Soundboard: libreria dei file e griglia di pad a pagine."""
+"""Soundboard: libreria dei file e griglia di pad a pagine.
+
+Oltre ai file della cartella, sui pad possono stare le **frasi** della sintesi vocale (chiavi ``tts:<id>``,
+testo e voce in ``config["phrases"]``): per il resto del programma sono suoni come gli altri.
+"""
 
 from __future__ import annotations
 
@@ -22,8 +26,9 @@ from PySide6.QtWidgets import (
 from ..audio.library import SUPPORTED_EXTENSIONS, SoundCache, list_sounds
 from ..config import Config
 from ..pads import MAX_SIZE, MIN_SIZE, PadLayout
-from .. import midi
+from .. import midi, tts
 from . import theme
+from .phrase_dialog import PhraseDialog
 from .sound_dialog import MidiBridge, SoundSettingsDialog, text_color_for
 
 MIME_KEY = "application/x-soundboard-key"
@@ -80,16 +85,18 @@ class PadButton(QWidget):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def set_sound(self, key: str | None, label: str, shortcut: str, missing: bool,
-                  color: str = "", emoji: str = "", midi_label: str = "", image: str = "") -> None:
+                  color: str = "", emoji: str = "", midi_label: str = "", image: str = "",
+                  title: str = "") -> None:
         self.key, self.label, self.shortcut, self.missing = key, label, shortcut, missing
         self.color, self.emoji, self.midi_label = color, emoji, midi_label
         self.image = image
+        title = title or key or ""
         tip = "Slot vuoto: clic o trascina qui un suono" if key is None else \
-            f"{key}\nClic: riproduci · Trascina: sposta · Tasto destro: opzioni"
+            f"{title}\nClic: riproduci · Trascina: sposta · Tasto destro: opzioni"
         if midi_label:
             tip += f"\nMIDI: {midi_label}"
         if missing:
-            tip = f"{key}\nFile non trovato nella cartella"
+            tip = f"{title}\nFile non trovato nella cartella"
         self.setToolTip(tip)
         self.update()
 
@@ -291,6 +298,9 @@ class LibraryList(QListWidget):
 # Vista principale -------------------------------------------------------------------
 class SoundboardView(QWidget):
     play_requested = Signal(str, object)     # chiave, Path
+    phrase_requested = Signal(str)           # chiave di una frase da far dire
+    phrase_changed = Signal(str)             # frase creata o modificata (per sintetizzarla subito)
+    speak_requested = Signal(str)            # testo scritto nella barra «Fai parlare»
     stop_requested = Signal()
     myinstants_requested = Signal()
     sounds_reloaded = Signal()
@@ -303,12 +313,15 @@ class SoundboardView(QWidget):
         self.layout_model = PadLayout.from_dict(config.data.get("pads"))
         self._first_layout = not config.data.get("pads")
         self._keys: list[str] = []
+        self._known_keys: set[str] = set()      # file presenti nella cartella
         self._known: set[str] | None = None
         self._pads: list[PadButton] = []
         self._shortcuts: list[QShortcut] = []
         self.midi_bridge: MidiBridge | None = None
         self.midi_port = ""
         self._learn_dialog: SoundSettingsDialog | None = None
+        self.preview_phrase = None               # (testo, voce, motore) -> anteprima in cuffia (dalla finestra)
+        self.config.data.setdefault("phrases", {})
         self.setAcceptDrops(True)
 
         # Barra cartella ---------------------------------------------------------------
@@ -414,10 +427,28 @@ class SoundboardView(QWidget):
         self.grid = QGridLayout(self.grid_host)
         self.grid.setContentsMargins(0, 0, 0, 0)
         self.grid.setSpacing(2)
+
+        self.say_edit = QLineEdit()
+        self.say_edit.setPlaceholderText("💬  Scrivi una frase e premi Invio: la dice la sintesi vocale (anche su Discord)")
+        self.say_edit.setMaxLength(tts.MAX_TEXT)
+        self.say_edit.setClearButtonEnabled(True)
+        self.say_edit.returnPressed.connect(self._say)
+        say_btn = QPushButton("Parla")
+        say_btn.setObjectName("primary")
+        say_btn.clicked.connect(self._say)
+        save_btn = QPushButton("Salva su un pad")
+        save_btn.setToolTip("Crea un pad con questa frase (nel primo slot libero)")
+        save_btn.clicked.connect(self._save_said_phrase)
+        say_row = QHBoxLayout()
+        say_row.addWidget(self.say_edit, 1)
+        say_row.addWidget(say_btn)
+        say_row.addWidget(save_btn)
+
         pv = QVBoxLayout(pad_panel)
         pv.setContentsMargins(10, 8, 10, 10)
         pv.addLayout(bar)
         pv.addWidget(self.grid_host, 1)
+        pv.addLayout(say_row)
 
         split = QSplitter(Qt.Orientation.Horizontal)
         split.addWidget(lib_panel)
@@ -477,9 +508,39 @@ class SoundboardView(QWidget):
     def path_for(self, key: str) -> Path:
         return self.folder / key
 
+    # Chiavi: file della cartella e frasi --------------------------------------------------
+    @property
+    def phrases(self) -> dict:
+        return self.config.data.setdefault("phrases", {})
+
+    def all_keys(self) -> list[str]:
+        """File della cartella, poi le frasi (in ordine alfabetico del nome mostrato)."""
+        return self._keys + sorted(self.phrases, key=lambda k: self.display_name(k).lower())
+
+    def exists(self, key: str) -> bool:
+        return key in self.phrases if tts.is_phrase(key) else key in self._known_keys
+
+    def display_name(self, key: str) -> str:
+        label = self.config.data["sounds"].get(key, {}).get("label")
+        if label:
+            return label
+        if tts.is_phrase(key):
+            return tts.phrase_label(self.phrases.get(key, {}).get("text", "")) or "Frase"
+        return Path(key).stem
+
+    def _emoji(self, key: str) -> str:
+        emoji = self.config.data["sounds"].get(key, {}).get("emoji", "")
+        return emoji or ("💬" if tts.is_phrase(key) else "")
+
+    def _title(self, key: str) -> str:
+        if tts.is_phrase(key):
+            return "Frase: «" + self.phrases.get(key, {}).get("text", "") + "»"
+        return key
+
     def reload(self) -> None:
         sounds = list_sounds(self.folder)
         self._keys = [s.key for s in sounds]
+        self._known_keys = set(self._keys)
         current = set(self._keys)
         layout_changed = False
         if self._known is None:
@@ -505,18 +566,18 @@ class SoundboardView(QWidget):
 
     def _refresh_library(self) -> None:
         self.library.clear()
-        for k in self._keys:
-            cfg = self.config.data["sounds"].get(k, {})
-            emoji, name = cfg.get("emoji", ""), cfg.get("label") or Path(k).stem
+        keys = self.all_keys()
+        for k in keys:
+            emoji, name = self._emoji(k), self.display_name(k)
             it = QListWidgetItem(f"{emoji}  {name}" if emoji else name)
             it.setData(KEY_ROLE, k)
             on_pad = self.layout_model.contains(k)
             if not on_pad:
                 it.setForeground(QColor(theme.MUTED))
-            it.setToolTip(k + ("" if on_pad else "\nNon è su nessun pad"))
+            it.setToolTip(self._title(k) + ("" if on_pad else "\nNon è su nessun pad"))
             self.library.addItem(it)
         self._apply_filter(self.search.text())
-        self.count_label.setText(f"{len(self._keys)}")
+        self.count_label.setText(f"{len(keys)}")
 
     def _apply_filter(self, text: str) -> None:
         t = text.lower().strip()
@@ -548,7 +609,6 @@ class SoundboardView(QWidget):
 
     def _refresh_pads(self) -> None:
         slots = self.layout_model.page.slots
-        existing = set(self._keys)
         sounds_cfg = self.config.data["sounds"]
         for pad in self._pads:
             key = slots.get(pad.index)
@@ -556,9 +616,9 @@ class SoundboardView(QWidget):
                 pad.set_sound(None, "", "", False)
             else:
                 cfg = sounds_cfg.get(key, {})
-                pad.set_sound(key, cfg.get("label") or Path(key).stem, cfg.get("shortcut", ""),
-                              key not in existing, cfg.get("color", ""), cfg.get("emoji", ""),
-                              midi.binding_label(cfg.get("midi")), cfg.get("image", ""))
+                pad.set_sound(key, self.display_name(key), cfg.get("shortcut", ""),
+                              not self.exists(key), cfg.get("color", ""), self._emoji(key),
+                              midi.binding_label(cfg.get("midi")), cfg.get("image", ""), self._title(key))
 
     def _on_grid_size(self) -> None:
         self.layout_model.resize(self.rows_spin.currentData(), self.cols_spin.currentData())
@@ -647,13 +707,20 @@ class SoundboardView(QWidget):
             self.play_key(key)
 
     def _choose_for_pad(self, index: int) -> None:
-        if not self._keys:
-            self.import_dialog(target=index)
+        keys = self.all_keys()
+        actions = ["💬  Nuova frase (sintesi vocale)…", "📁  Aggiungi file…"]
+        names = actions + [f"{self._emoji(k)}  {self.display_name(k)}".strip() for k in keys]
+        name, ok = QInputDialog.getItem(self, f"Slot {index + 1}", "Cosa mettere sul pad:", names,
+                                        len(actions) if keys else 0, False)
+        if not ok:
             return
-        names = [Path(k).stem for k in self._keys]
-        name, ok = QInputDialog.getItem(self, f"Slot {index + 1}", "Suono da assegnare:", names, 0, False)
-        if ok:
-            self._assign(index, self._keys[names.index(name)])
+        i = names.index(name)
+        if i == 0:
+            self.new_phrase(target=index)
+        elif i == 1:
+            self.import_dialog(target=index)
+        else:
+            self._assign(index, keys[i - len(actions)])
 
     def _assign(self, index: int, key: str) -> None:
         self.layout_model.assign(self.layout_model.current, index, key)
@@ -677,6 +744,7 @@ class SoundboardView(QWidget):
         m = QMenu(self)
         if key is None:
             m.addAction("Assegna suono…", lambda: self._choose_for_pad(index))
+            m.addAction("💬  Nuova frase…", lambda: self.new_phrase(target=index))
             m.addAction("Aggiungi file…", lambda: self.import_dialog(target=index))
         else:
             m.addAction("▶  Riproduci", lambda: self.play_key(key))
@@ -684,7 +752,10 @@ class SoundboardView(QWidget):
             m.addAction("Personalizza (nome, immagine, colore, MIDI)…", lambda: self._edit_settings(key))
             m.addAction("Togli dal pad", lambda: self._clear_pad(index))
             m.addSeparator()
-            if key in self._keys:
+            if tts.is_phrase(key) and key in self.phrases:
+                m.addAction("💬  Modifica frase…", lambda: self.edit_phrase(key))
+                m.addAction("Elimina frase", lambda: self.delete_phrase(key))
+            elif key in self._keys:
                 m.addAction("Rinomina file…", lambda: self._rename(self.path_for(key)))
                 m.addAction("Sposta file nel cestino", lambda: self._trash(self.path_for(key)))
         m.exec(global_pos)
@@ -704,10 +775,16 @@ class SoundboardView(QWidget):
             m.addAction("▶  Riproduci", lambda: self.play_key(key))
             m.addAction("Metti nel primo pad libero", lambda: self.place_on_pad(key))
             m.addAction("Personalizza (nome, immagine, colore, MIDI)…", lambda: self._edit_settings(key))
-            m.addAction("Rinomina…", lambda: self._rename(path))
-            m.addSeparator()
-            m.addAction("Sposta nel cestino", lambda: self._trash(path))
+            if tts.is_phrase(key):
+                m.addAction("💬  Modifica frase…", lambda: self.edit_phrase(key))
+                m.addSeparator()
+                m.addAction("Elimina frase", lambda: self.delete_phrase(key))
+            else:
+                m.addAction("Rinomina…", lambda: self._rename(path))
+                m.addSeparator()
+                m.addAction("Sposta nel cestino", lambda: self._trash(path))
         else:
+            m.addAction("💬  Nuova frase…", self.new_phrase)
             m.addAction("Aggiungi file…", self.import_dialog)
             m.addAction("Ricarica", self.reload)
         m.exec(self.library.mapToGlobal(pos))
@@ -778,6 +855,12 @@ class SoundboardView(QWidget):
 
     # Riproduzione -----------------------------------------------------------------
     def play_key(self, key: str, quiet: bool = False) -> None:
+        if tts.is_phrase(key):
+            if key in self.phrases:
+                self.phrase_requested.emit(key)
+            elif not quiet:
+                QMessageBox.warning(self, "Frase", "Questa frase è stata eliminata.")
+            return
         path = self.path_for(key)
         if not path.exists():
             if not quiet:
@@ -798,7 +881,7 @@ class SoundboardView(QWidget):
             sc.setEnabled(False)
             sc.deleteLater()
         self._shortcuts = []
-        for key in self._keys:
+        for key in self.all_keys():
             seq = self.config.data["sounds"].get(key, {}).get("shortcut", "")
             if seq:
                 sc = QShortcut(QKeySequence(seq), self)
@@ -809,7 +892,9 @@ class SoundboardView(QWidget):
     # Gestione file -------------------------------------------------------------------
     def _edit_settings(self, key: str) -> None:
         s = self.config.sound_settings(key)
-        dlg = SoundSettingsDialog(Path(key).stem, s, self.midi_bridge, self.midi_port, self)
+        default_name = tts.phrase_label(self.phrases.get(key, {}).get("text", "")) if tts.is_phrase(key) \
+            else Path(key).stem
+        dlg = SoundSettingsDialog(default_name, s, self.midi_bridge, self.midi_port, self)
         self._learn_dialog = dlg
         try:
             ok = dlg.exec()
@@ -827,6 +912,73 @@ class SoundboardView(QWidget):
             self._refresh_library()
             self._rebuild_shortcuts()
             self.changed.emit()
+
+    # Frasi (sintesi vocale) --------------------------------------------------------------
+    def _phrase_dialog(self, phrase: dict | None) -> dict | None:
+        dlg = PhraseDialog(phrase, self.preview_phrase, self)
+        return dlg.values() if dlg.exec() else None
+
+    def add_phrase(self, values: dict, target: int | None = None) -> str:
+        """Registra una frase e la mette sul pad ``target`` (o nel primo libero)."""
+        key = tts.new_phrase_key()
+        while key in self.phrases:
+            key = tts.new_phrase_key()
+        self.phrases[key] = {"text": values["text"], "engine": values.get("engine", ""),
+                             "voice": values.get("voice", "")}
+        if target is not None:
+            self.layout_model.assign(self.layout_model.current, target, key)
+        else:
+            page, _ = self.layout_model.place(key)
+            self.layout_model.current = page
+        self._after_phrase_change(key)
+        return key
+
+    def new_phrase(self, target: int | None = None, text: str = "") -> None:
+        values = self._phrase_dialog({"text": text} if text else None)
+        if values:
+            self.add_phrase(values, target)
+
+    def edit_phrase(self, key: str) -> None:
+        values = self._phrase_dialog(self.phrases.get(key))
+        if values:
+            self.phrases[key] = values
+            self._after_phrase_change(key)
+
+    def delete_phrase(self, key: str) -> None:
+        name = self.display_name(key)
+        if QMessageBox.question(self, "Elimina frase", f"Eliminare la frase «{name}»?") \
+                != QMessageBox.StandardButton.Yes:
+            return
+        self.phrases.pop(key, None)
+        self.config.data["sounds"].pop(key, None)
+        self.layout_model.remove_key(key)
+        self._rebuild_page_tabs()
+        self._refresh_pads()
+        self._refresh_library()
+        self._rebuild_shortcuts()
+        self._save_layout()
+
+    def _after_phrase_change(self, key: str) -> None:
+        self._rebuild_page_tabs()
+        self._refresh_pads()
+        self._refresh_library()
+        self._rebuild_shortcuts()
+        self._save_layout()
+        self.phrase_changed.emit(key)
+
+    def _say(self) -> None:
+        text = tts.clean_text(self.say_edit.text())
+        if text:
+            self.speak_requested.emit(text)
+            self.say_edit.selectAll()          # Invio di nuovo = ripete; scrivendo si sostituisce
+
+    def _save_said_phrase(self) -> None:
+        text = tts.clean_text(self.say_edit.text())
+        if not text:
+            self.new_phrase()
+            return
+        self.add_phrase({"text": text, "engine": "", "voice": ""})
+        self.say_edit.clear()
 
     def play_page_slot(self, page: int, index: int) -> None:
         """Suona lo slot ``index`` (da 0) della pagina ``page`` (usato dal controllo remoto)."""

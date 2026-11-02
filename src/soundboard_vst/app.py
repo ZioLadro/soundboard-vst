@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from . import APP_NAME, __version__, discord_bot, midi, midi_map
+from . import APP_NAME, __version__, discord_bot, midi, midi_map, tts
 from .audio import devices
 from .audio.engine import AudioEngine
 from .audio.library import SoundCache, decode
@@ -28,6 +28,11 @@ from .ui.myinstants_dialog import MyInstantsDialog
 from .ui.settings_dialog import SettingsDialog
 from .ui.sound_dialog import MidiBridge
 from .ui.soundboard_view import SoundboardView
+
+
+class TTSSignals(QObject):
+    """Riporta nel thread dell'interfaccia le frasi sintetizzate (o gli errori)."""
+    done = Signal(object, object)        # richiesta (dict), Future
 
 
 class BotSignals(QObject):
@@ -92,6 +97,13 @@ class MainWindow(QMainWindow):
         # Tab: Soundboard e Mixer ----------------------------------------------------
         self.board = SoundboardView(config, self.cache)
         self.board.play_requested.connect(self.play_sound)
+        self.board.phrase_requested.connect(self.trigger)
+        self.board.speak_requested.connect(self.speak)
+        self.board.phrase_changed.connect(self._prepare_phrase)
+        self.board.preview_phrase = lambda text, voice, engine: self.speak(
+            text, voice=voice, engine=engine, preview=True)
+        self.tts_signals = TTSSignals()
+        self.tts_signals.done.connect(self._on_tts_done)
         self.board.stop_requested.connect(self.engine.stop_sounds)
         self.board.myinstants_requested.connect(self.open_myinstants)
         self.board.changed.connect(self.schedule_save)
@@ -243,7 +255,11 @@ class MainWindow(QMainWindow):
 
     def preload_sounds(self) -> None:
         """Decodifica in anticipo i suoni dei pad, così la prima pressione non aspetta la decodifica."""
-        paths = [self.board.path_for(k) for pg in self.board.layout_model.pages for k in pg.slots.values()]
+        keys = [k for pg in self.board.layout_model.pages for k in pg.slots.values()]
+        paths = [self.board.path_for(k) for k in keys if not tts.is_phrase(k)]
+        for k in keys:
+            if tts.is_phrase(k):
+                self._prepare_phrase(k)
         cache = self.cache
 
         def run():
@@ -267,6 +283,58 @@ class MainWindow(QMainWindow):
         vol = float(self.config.data["sounds"].get(key, {}).get("volume", 1.0))
         self.engine.play(key, data, vol * scale, overlap=self.board.overlap.isChecked())
         self.bot.notify_sound()
+
+    def trigger(self, key: str, scale: float = 1.0) -> None:
+        """Suona un pad qualsiasi: file della cartella o frase della sintesi vocale."""
+        if tts.is_phrase(key):
+            ph = self.board.phrases.get(key)
+            if ph:
+                self.speak(ph.get("text", ""), key=key, voice=ph.get("voice", ""),
+                           engine=ph.get("engine", ""), scale=scale)
+            return
+        path = self.board.path_for(key)
+        if path.exists():
+            self.play_sound(key, path, scale)
+
+    # Sintesi vocale ----------------------------------------------------------------------
+    def speak(self, text: str, key: str = tts.LIVE_KEY, voice: str = "", engine: str = "",
+              preview: bool = False, scale: float = 1.0, settings: dict | None = None) -> None:
+        """Fa dire ``text``: sui pad e su Discord, oppure (``preview``) solo in cuffia."""
+        spec = tts.spec_for(text, settings or self.config.data.get("tts", {}), voice, engine)
+        if not spec.text:
+            return
+        reason = tts.unavailable_reason(spec.engine)
+        if reason:
+            self.statusBar().showMessage(f"Sintesi vocale non disponibile: {reason}", 8000)
+            return
+        fut = tts.synthesize_async(spec)
+        req = {"key": key, "preview": preview, "scale": scale, "text": spec.text}
+        if fut.done():
+            self._on_tts_done(req, fut)          # già in cache: parte subito
+            return
+        self.statusBar().showMessage("Sintesi vocale…", 3000)
+        fut.add_done_callback(lambda f, r=req: self.tts_signals.done.emit(r, f))
+
+    def _on_tts_done(self, req: dict, fut) -> None:
+        try:
+            path = fut.result()
+        except Exception as exc:
+            self.statusBar().showMessage(f"Sintesi vocale non riuscita: {exc}", 10000)
+            return
+        if req["preview"]:
+            self.preview_file(path)
+        else:
+            self.play_sound(req["key"], path, req["scale"])
+
+    def _prepare_phrase(self, key: str) -> None:
+        """Sintetizza in anticipo una frase dei pad, così alla pressione parte subito."""
+        ph = self.board.phrases.get(key)
+        if not ph:
+            return
+        spec = tts.phrase_spec(ph, self.config.data.get("tts", {}))
+        if spec.text and not tts.unavailable_reason(spec.engine):
+            fut = tts.synthesize_async(spec)
+            fut.add_done_callback(lambda f: f.exception())     # errori: si vedranno alla pressione
 
     # Bot Discord ------------------------------------------------------------------------
     def start_bot(self) -> None:
@@ -458,11 +526,8 @@ class MainWindow(QMainWindow):
         key = self.board.key_for_midi(ev)
         if key is None:
             return
-        path = self.board.path_for(key)
-        if not path.exists():
-            return
         scale = ev.value / 127.0 if self.config.data["midi"].get("velocity") else 1.0
-        self.play_sound(key, path, scale)
+        self.trigger(key, scale)
 
     def _run_target(self, target, ev) -> None:
         """Esegue un'azione della mappa MIDI."""
@@ -522,6 +587,17 @@ class MainWindow(QMainWindow):
     def _on_myinstants_added(self, path: Path) -> None:
         self.board.add_keys([path.name])
 
+    def preview_file(self, path: Path) -> None:
+        """Riproduce un file solo in cuffia (non arriva a Discord)."""
+        if not self.engine.status.running:
+            self.statusBar().showMessage("Audio fermo: premi «Avvia audio».", 4000)
+        try:
+            audio = self.cache.get(path)
+        except Exception as exc:
+            QMessageBox.warning(self, "Anteprima", f"Impossibile riprodurre l'anteprima:\n{exc}")
+            return
+        self.engine.play("__anteprima__", audio, 1.0, preview=True)
+
     def preview_bytes(self, data: bytes) -> None:
         """Riproduce un suono scaricato solo in cuffia (non arriva a Discord)."""
         if not self.engine.status.running:
@@ -552,7 +628,8 @@ class MainWindow(QMainWindow):
         old_bot = dict(self.config.data["discord"])
         old_audio = dict(self.config.data["audio"])
         old_midi = self.config.data["midi"].get("input", "")
-        dlg = SettingsDialog(self.config, self, midi_bridge=self.midi_bridge)
+        dlg = SettingsDialog(self.config, self, midi_bridge=self.midi_bridge,
+                             preview_tts=lambda text, settings: self.speak(text, preview=True, settings=settings))
         dlg.tabs.setCurrentIndex(tab)
         self._settings_dialog = dlg
         try:

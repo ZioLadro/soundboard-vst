@@ -5,6 +5,7 @@ con codice 0 (usato dalla build automatica).
 """
 
 import sys
+from pathlib import Path
 
 
 def selftest() -> int:
@@ -43,7 +44,26 @@ def selftest() -> int:
     assert deno, "Deno non incluso"
     subprocess.run([deno, "--version"], check=True, capture_output=True, **binaries.no_window_kwargs())
 
+    import edge_tts  # noqa: F401  voci neurali della sintesi vocale
     import segno  # noqa: F401  QR code del controllo remoto
+    import tempfile
+
+    from soundboard_vst import tts
+
+    if sys.platform == "win32":
+        # sintesi vera con le voci di Windows (PowerShell + System.Speech)
+        voices = tts.list_voices(tts.ENGINE_SYSTEM)
+        if not voices:
+            print("ATTENZIONE: nessuna voce di sistema su questa macchina, sintesi non provata")
+    if sys.platform == "win32" and voices:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "prova.wav"
+            tts.ENGINES[tts.ENGINE_SYSTEM].synthesize(tts.Spec("Prova d'uso, \"virgolette\"", "system", voices[0].id), out)
+            from soundboard_vst.audio.library import decode
+
+            audio = decode(out, 48000)
+            assert audio.shape[1] > 4800 and abs(audio).max() > 0.01, "sintesi vocale di Windows muta"
+        print("voci di sistema:", len(voices), voices[0].id)
     from aiohttp import web  # noqa: F401  server del controllo remoto
     from soundboard_vst.remote.server import RemoteServer  # noqa: F401
 

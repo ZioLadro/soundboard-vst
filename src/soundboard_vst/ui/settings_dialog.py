@@ -5,23 +5,25 @@ from __future__ import annotations
 from PySide6.QtCore import QRegularExpression, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence, QRegularExpressionValidator
 from PySide6.QtWidgets import (
-    QAbstractItemView, QHeaderView, QKeySequenceEdit, QTableWidget, QTableWidgetItem, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
+    QSlider, QAbstractItemView, QHeaderView, QKeySequenceEdit, QTableWidget, QTableWidgetItem, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QScrollArea, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
 )
 
-from .. import discord_bot, midi, midi_map
+from .. import discord_bot, midi, midi_map, tts
 from ..audio import devices
 from ..config import Config, default_vst3_dirs
 from ..discord_commands import ACCESS_EVERYONE, ACCESS_LABELS, ACCESS_OWNER, ACCESS_ROLE
 from . import theme
+from .phrase_dialog import VoiceCombo
 
 NONE_LABEL = "— nessuno —"
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, config: Config, parent=None, midi_bridge=None):
+    def __init__(self, config: Config, parent=None, midi_bridge=None, preview_tts=None):
         super().__init__(parent)
         self._bridge = midi_bridge
+        self._preview_tts = preview_tts          # (testo, impostazioni) -> anteprima in cuffia
         self._learning_target: str | None = None
         self._map: dict[str, dict] = {k: dict(v) for k, v in config.data.get("midi_map", {}).items()}
         self.setWindowTitle("Impostazioni")
@@ -317,13 +319,66 @@ class SettingsDialog(QDialog):
         rform.addRow(remote_hint)
         self._show_remote_token()
 
+        # Sintesi vocale -------------------------------------------------------------------
+        tc = config.data.get("tts", {})
+        tts_box = QGroupBox("Sintesi vocale")
+        tform = QFormLayout(tts_box)
+        self.tts_engine = QComboBox()
+        for value, label in tts.ENGINE_LABELS.items():
+            self.tts_engine.addItem(label, value)
+        self.tts_engine.setCurrentIndex(max(0, self.tts_engine.findData(tc.get("engine", tts.ENGINE_EDGE))))
+        tform.addRow("Motore", self.tts_engine)
+        self._tts_voices = {tts.ENGINE_EDGE: tc.get("edge_voice") or tts.DEFAULT_EDGE_VOICE,
+                            tts.ENGINE_SYSTEM: tc.get("system_voice", "")}
+        engine = self.tts_engine.currentData()
+        self.tts_voice = VoiceCombo([engine], (engine, self._tts_voices[engine]),
+                                    default_item="" if engine == tts.ENGINE_EDGE else "Voce predefinita del sistema")
+        voice_refresh = QPushButton("Aggiorna")
+        voice_refresh.setToolTip("Ricarica l'elenco delle voci")
+        voice_refresh.clicked.connect(self.tts_voice.refresh)
+        vrow = QHBoxLayout()
+        vrow.addWidget(self.tts_voice, 1)
+        vrow.addWidget(voice_refresh)
+        tform.addRow("Voce predefinita", vrow)
+        self.tts_engine.currentIndexChanged.connect(self._on_tts_engine)
+        self.tts_rate, rate_row = self._tts_slider(-50, 100, int(tc.get("rate", 0)), "{:+d}%")
+        tform.addRow("Velocità", rate_row)
+        self.tts_pitch, pitch_row = self._tts_slider(-50, 50, int(tc.get("pitch", 0)), "{:+d} Hz")
+        tform.addRow("Tono", pitch_row)
+        self.tts_test = QLineEdit("Ciao! Questa è la voce della soundboard.")
+        test_btn = QPushButton("▶  Ascolta in cuffia")
+        test_btn.clicked.connect(self._test_tts)
+        test_btn.setEnabled(preview_tts is not None)
+        trow2 = QHBoxLayout()
+        trow2.addWidget(self.tts_test, 1)
+        trow2.addWidget(test_btn)
+        tform.addRow("Prova", trow2)
+        self.tts_status = QLabel()
+        self.tts_status.setWordWrap(True)
+        self.tts_status.setStyleSheet(f"color: {theme.DANGER};")
+        tform.addRow(self.tts_status)
+        tts_hint = QLabel(
+            "Scrivi nella barra 💬 sotto i pad e premi Invio per far parlare la soundboard, oppure crea pad con "
+            "frasi fisse (tasto destro su un pad vuoto → <b>Nuova frase…</b>): funzionano come gli altri suoni, "
+            "con scorciatoie, note MIDI, telefono e Discord (<b>/parla</b>).<br><br>"
+            "<b>Voci neurali Microsoft</b>: molto naturali, tante lingue; servono Internet e usano un servizio "
+            "non ufficiale, che potrebbe cambiare. <b>Voci del sistema</b>: offline; su Windows sono quelle "
+            "installate (es. «Microsoft Elsa» per l'italiano). Ogni frase viene creata una volta e poi tenuta in "
+            "una cache, così la seconda volta parte subito.")
+        tts_hint.setWordWrap(True)
+        tts_hint.setTextFormat(Qt.TextFormat.RichText)
+        tts_hint.setStyleSheet(f"color: {theme.MUTED};")
+        tform.addRow(tts_hint)
+        self._on_tts_engine()
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
 
         self.tabs = QTabWidget()
         for box, title in ((audio_box, "Audio"), (midi_box, "MIDI"), (bot_box, "Bot Discord"),
-                           (vst_box, "Plugin VST3"), (remote_box, "Controllo remoto")):
+                           (vst_box, "Plugin VST3"), (remote_box, "Controllo remoto"),
+                           (tts_box, "Sintesi vocale")):
             page = QWidget()
             pl = QVBoxLayout(page)
             box.setTitle("")
@@ -496,6 +551,50 @@ class SettingsDialog(QDialog):
         self._remote_token = new_token()
         self._show_remote_token()
 
+    # Sintesi vocale ------------------------------------------------------------------------
+    def _tts_slider(self, lo: int, hi: int, value: int, fmt: str):
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setRange(lo, hi)
+        slider.setValue(max(lo, min(hi, value)))
+        label = QLabel(fmt.format(slider.value()))
+        label.setMinimumWidth(56)
+        slider.valueChanged.connect(lambda v: label.setText(fmt.format(v)))
+        reset = QPushButton("0")
+        reset.setFixedWidth(32)
+        reset.setToolTip("Normale")
+        reset.clicked.connect(lambda: slider.setValue(0))
+        row = QHBoxLayout()
+        row.addWidget(slider, 1)
+        row.addWidget(label)
+        row.addWidget(reset)
+        return slider, row
+
+    def _on_tts_engine(self) -> None:
+        engine = self.tts_engine.currentData()
+        old_engine, old_voice = self.tts_voice.selected()
+        if old_engine:
+            self._tts_voices[old_engine] = old_voice
+        self.tts_voice.default_item = "" if engine == tts.ENGINE_EDGE else "Voce predefinita del sistema"
+        self.tts_voice._selected = (engine, self._tts_voices.get(engine, ""))
+        self.tts_voice.set_engines([engine])
+        self.tts_pitch.setEnabled(engine == tts.ENGINE_EDGE)
+        reason = tts.unavailable_reason(engine)
+        self.tts_status.setText(f"Non disponibile: {reason}" if reason else "")
+
+    def tts_values(self) -> dict:
+        engine, voice = self.tts_voice.selected()
+        engine = self.tts_engine.currentData()
+        voices = dict(self._tts_voices)
+        voices[engine] = voice
+        return {"engine": engine, "edge_voice": voices.get(tts.ENGINE_EDGE) or tts.DEFAULT_EDGE_VOICE,
+                "system_voice": voices.get(tts.ENGINE_SYSTEM, ""),
+                "rate": self.tts_rate.value(), "pitch": self.tts_pitch.value()}
+
+    def _test_tts(self) -> None:
+        text = self.tts_test.text().strip()
+        if text and self._preview_tts is not None:
+            self._preview_tts(text, self.tts_values())
+
     def _save(self) -> None:
         a = self.config.data["audio"]
         a["host_api"] = self.host_api.currentText()
@@ -521,6 +620,7 @@ class SettingsDialog(QDialog):
             },
         })
         self.config.data["midi_map"] = self._map
+        self.config.data["tts"] = self.tts_values()
         self.config.data["remote"] = {"enabled": self.remote_enabled.isChecked(),
                                       "port": self.remote_port.value(), "token": self._remote_token}
         self.config.data["midi"] = {"input": self.midi_port.currentData() or "",
