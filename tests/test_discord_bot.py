@@ -147,3 +147,30 @@ def test_sound_during_music_does_not_cut_the_music():
     x = np.concatenate(out)[FRAME * 5:]
     slope = 2 * np.pi * 220 / 48000 * 0.5
     assert np.abs(np.diff(x)).max() < slope * 1.2 + 2 / 32767     # nessun salto: musica continua
+
+
+def test_dave_compatibility_check():
+    """davey 0.2 senza un discord.py che chiami prepare_transition = bot muto: va riconosciuto."""
+    from soundboard_vst.discord_bot import dave_compatible
+
+    assert dave_compatible()                                  # combinazione installata (davey 0.1.x)
+
+    class Old:                                                 # davey 0.1.x
+        pass
+
+    class New:                                                 # davey 0.2: va chiamato prepare_transition
+        def prepare_transition(self, tid, version):
+            pass
+
+    import types
+    davey_old, davey_new = types.SimpleNamespace(DaveSession=Old), types.SimpleNamespace(DaveSession=New)
+    gw_old = types.ModuleType("gw_old")
+    exec("class WS:\n    async def on_commit(self, s, m):\n        s.process_commit(m)\n", gw_old.__dict__)
+    gw_new = types.ModuleType("gw_new")
+    exec("class WS:\n    async def on_commit(self, s, m):\n        if s.process_commit(m):\n"
+         "            s.prepare_transition(1, 1)\n", gw_new.__dict__)
+    for mod in (gw_old, gw_new):
+        mod.WS.__module__ = mod.__name__
+    assert dave_compatible(davey_old, gw_old)
+    assert not dave_compatible(davey_new, gw_old)             # il caso della build 0.6.1
+    assert dave_compatible(davey_new, gw_new)                 # un discord.py futuro che lo supporta

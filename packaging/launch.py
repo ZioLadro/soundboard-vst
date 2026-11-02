@@ -23,6 +23,8 @@ def selftest() -> int:
     assert discord_bot.available(), f"discord.py non incluso: {discord_bot.unavailable_reason()}"
     import davey  # noqa: F401  crittografia DAVE per la voce
     import discord
+
+    assert discord_bot.dave_compatible(), "davey non compatibile con discord.py: il bot sarebbe muto"
     import nacl  # noqa: F401
 
     if sys.platform == "win32":

@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.6.2 — 2026-11-02
+
+### Correzioni
+- **Il bot Discord era muto nella build 0.6.1**: si accendeva verde ma nessuno sentiva niente. La build aveva preso
+  davey 0.2.0 (la libreria della crittografia vocale DAVE, uscita poco prima), che cambia il modo di passare alle
+  nuove chiavi; discord.py 2.7.1 non lo supporta ancora, quindi l'audio partiva cifrato senza una chiave valida.
+  davey è ora fissato alla 0.1.x.
+- La build fallisce se include una combinazione di davey e discord.py incompatibile, e il bot mostra un avviso
+  invece di restare muto senza spiegazioni.
+
 ## v0.6.1 — 2026-11-02
 
 ### Correzioni
