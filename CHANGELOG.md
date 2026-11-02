@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.6.1 — 2026-11-02
+
+### Correzioni
+- **Niente più scatti e buchi occasionali** con la musica del player (YouTube e file) e con il microfono:
+  microfono, cuffie e uscita verso il cavo virtuale vanno su schede con clock leggermente diversi, e il buffer
+  tra loro prima o poi scartava un pezzo o restava vuoto. Ora la differenza di velocità viene compensata
+  ricampionando in modo impercettibile (al massimo ±0,2%) e il buffer resta sempre allo stesso livello.
+- Bot Discord: stessa compensazione tra il clock della scheda audio e quello del PC, così i brani lunghi non
+  fanno scatti; conversione di frequenza continua quando il motore non è a 48 kHz (prima ogni frame di 20 ms
+  veniva ricampionato da solo, con piccole giunture).
+- Bot Discord: premere un pad mentre suona il player non taglia più un pezzo di musica (la risincronizzazione
+  avviene solo dopo un momento di silenzio). Margine del bot portato da 30 a 40 ms.
+- Meno contesa con il thread audio: gli aggiornamenti di avanzamento dei download di YouTube arrivano
+  all'interfaccia al massimo 4 volte al secondo, e il thread audio ottiene prima il turno in Python.
+- YouTube: i primi aggiornamenti di avanzamento di un download non vanno più persi.
+
 ## v0.6.0 — 2026-11-02
 
 ### Novità

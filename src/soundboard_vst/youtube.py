@@ -11,6 +11,7 @@ import hashlib
 import os
 import re
 import threading
+import time
 import urllib.parse
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
@@ -151,7 +152,17 @@ def cached_file(url: str) -> Path | None:
     return None
 
 
+PROGRESS_INTERVAL = 0.25          # al massimo 4 aggiornamenti al secondo verso l'interfaccia
+_last_notify: dict[str, float] = {}
+
+
 def _notify(vid: str, fraction: float) -> None:
+    # yt-dlp chiama l'hook a ogni pezzo scaricato (centinaia di volte al secondo): inoltrarle tutte
+    # all'interfaccia toglie tempo al thread audio, che in Python deve contendersi il GIL
+    now = time.monotonic()
+    if fraction < 1.0 and now - _last_notify.get(vid, 0.0) < PROGRESS_INTERVAL:
+        return
+    _last_notify[vid] = now
     for cb in list(_progress.get(vid, [])):
         try:
             cb(fraction)
@@ -226,9 +237,11 @@ def download(track: Track, progress: Callable[[float], None] | None = None) -> P
     if hit is not None:
         os.utime(hit, None)          # usato di recente: non va cancellato per primo
         return hit
-    vid, fut = _get_future(track)
+    vid = video_id(track.source)
     if progress is not None:
+        # prima di avviare il download, altrimenti i primi aggiornamenti possono andare persi
         _progress.setdefault(vid, []).append(progress)
+    vid, fut = _get_future(track)
     try:
         return fut.result()
     finally:

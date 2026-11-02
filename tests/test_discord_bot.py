@@ -63,7 +63,8 @@ def test_source_continuous_never_idles_and_resyncs_backlog():
     src.mark(time.perf_counter())
     first = np.frombuffer(src.read(), "<i2")
     assert len(ring) <= SoundboardSource.KEEP          # ritardo scartato
-    assert first.any() and len(lat) == 1 and lat[0] < 1000
+    second = np.frombuffer(src.read(), "<i2")          # restano 40 ms: il suono arriva entro 2 frame
+    assert (first.any() or second.any()) and len(lat) == 1 and lat[0] < 1000
 
 
 def test_source_resamples_from_44100():
@@ -127,3 +128,22 @@ def test_restarting_audio_keeps_bot_ring_object():
     for _ in range(4):
         eng.render(1024)
     assert np.frombuffer(src.read(), "<i2").any()
+
+
+def test_sound_during_music_does_not_cut_the_music():
+    """Premere un pad mentre suona il player non deve scartare audio (scatto nella musica)."""
+    ring = RingBuffer(2, 48000)
+    src = SoundboardSource(ring, 48000, lambda: True, is_continuous=lambda: True)
+    t = np.arange(48000 * 2) / 48000
+    music = np.stack([np.sin(2 * np.pi * 220 * t)] * 2).astype(np.float32) * 0.5
+    pos, out = 0, []
+    for i in range(60):
+        while len(ring) < SoundboardSource.KEEP + FRAME:   # il motore scrive a blocchi da 512
+            ring.write(music[:, pos:pos + 512])
+            pos += 512
+        if i in (20, 40):
+            src.mark(time.perf_counter())                  # parte un suono della soundboard
+        out.append(np.frombuffer(src.read(), "<i2").reshape(-1, 2)[:, 0] / 32767.0)
+    x = np.concatenate(out)[FRAME * 5:]
+    slope = 2 * np.pi * 220 / 48000 * 0.5
+    assert np.abs(np.diff(x)).max() < slope * 1.2 + 2 / 32767     # nessun salto: musica continua

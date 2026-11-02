@@ -629,6 +629,9 @@ class MainWindow(QMainWindow):
 
 
 def main() -> None:
+    # Il thread audio (callback di PortAudio) deve prendere il GIL ogni ~10 ms: con l'intervallo
+    # predefinito (5 ms) un thread occupato (yt-dlp, interfaccia, bot) può farlo arrivare tardi.
+    sys.setswitchinterval(0.001)
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(__version__)
