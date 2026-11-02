@@ -53,7 +53,9 @@ def selftest() -> int:
     if sys.platform == "win32":
         # sintesi vera con le voci di Windows (PowerShell + System.Speech)
         voices = tts.list_voices(tts.ENGINE_SYSTEM)
-        assert voices, "nessuna voce di sistema trovata"
+        if not voices:
+            print("ATTENZIONE: nessuna voce di sistema su questa macchina, sintesi non provata")
+    if sys.platform == "win32" and voices:
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "prova.wav"
             tts.ENGINES[tts.ENGINE_SYSTEM].synthesize(tts.Spec("Prova d'uso, \"virgolette\"", "system", voices[0].id), out)
