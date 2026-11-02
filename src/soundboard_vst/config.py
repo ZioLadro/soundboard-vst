@@ -69,7 +69,8 @@ DEFAULTS: dict[str, Any] = {
     "vst3_dirs": [],             # vuoto = cartelle standard
     "overlap_sounds": True,
     "midi": {"input": "", "velocity": False},
-    "midi_map": {},              # destinazione (es. "strip:mic:gain") -> controllo MIDI
+    "midi_map": {},
+    "remote": {"enabled": False, "port": 8765, "token": ""},   # controllo da browser              # destinazione (es. "strip:mic:gain") -> controllo MIDI
     "player": {},                # coda, brano corrente, ripetizione, casuale
     "discord": {
         "token": "",             # token del bot (salvato in chiaro: non condividere il file)

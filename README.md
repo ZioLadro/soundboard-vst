@@ -18,6 +18,8 @@ la tua voce **più** i suoni, già mixati ed elaborati.
   - «Sovrapponi» per far suonare lo stesso suono più volte insieme, «Stop tutto» per zittire tutto.
 - **Ricerca su [MyInstants](https://www.myinstants.com)** direttamente dall'app: cerca o sfoglia le tendenze, ascolta l'anteprima solo in cuffia (non arriva a Discord), e aggiungi il suono con un clic: viene scaricato nella cartella e messo su un pad.
 - **Player** (tab *Player*): coda di brani da file, cartelle, playlist `.m3u`, **video e playlist di YouTube** e ricerca su YouTube, con un suo canale nel mixer. La musica arriva a Discord (tramite bot o cavo virtuale) e in cuffia.
+- **Controllo remoto da browser**: una pagina per telefono o tablet con pad, player (anche link YouTube), mixer e
+  comandi del bot, protetta da una chiave; si apre inquadrando un QR code. Dall'esterno funziona con Tailscale.
 - **Bot Discord integrato**: il bot entra nel canale vocale in cui ti trovi (e ti segue se cambi canale) e riproduce i suoni che premi, con gli effetti e il fader del canale Soundboard. Per i suoni non serve VB-Cable.
 - **Ingresso**: scegli microfono o scheda audio.
 - **Uscita verso Discord**: il mix va su un cavo audio virtuale, che gli altri programmi vedono come microfono.
@@ -182,6 +184,29 @@ inclusi nell'eseguibile. YouTube cambia spesso: se smette di funzionare, aggiorn
 prende l'ultima versione di yt-dlp). Scaricare o trasmettere contenuti di YouTube con strumenti esterni è contrario ai
 suoi termini di servizio, e la musica è spesso protetta da diritti: usalo per uso personale e con cognizione.
 
+## Controllo remoto (telefono, tablet, altro PC)
+
+![Controllo remoto](docs/remote.png)
+
+1. **Impostazioni → Controllo remoto** → spunta «Attiva il controllo da browser» (porta predefinita 8765) e salva.
+   La prima volta Windows chiede il permesso di rete: consenti l'accesso sulle **reti private**.
+2. Premi **📱** in alto: inquadra il **QR code** con il telefono (connesso alla stessa rete Wi-Fi) oppure copia il link.
+3. Sulla pagina trovi tre schede: **Pad** (tutte le pagine, con colori, emoji e immagini), **Player** (in riproduzione,
+   avanzamento, comandi, volume, coda; puoi incollare un link YouTube o scrivere una ricerca: viene aggiunto il primo
+   risultato) e **Mixer** (volumi e mute dei canali, avvio/ingresso/uscita del bot). Il ■ in alto ferma tutti i suoni.
+   Aggiungi la pagina alla schermata Home per usarla come un'app.
+
+Il link contiene una **chiave di accesso**: chi ce l'ha può controllare la soundboard. Dopo la prima apertura la chiave
+viene tolta dall'indirizzo e salvata in un cookie. Se la condividi per sbaglio, premi **Nuova chiave** nelle
+impostazioni: i link vecchi smettono di funzionare.
+
+**Dall'esterno di casa:**
+- **Tailscale (consigliato)**: installa [Tailscale](https://tailscale.com) (gratuito) sul PC e sul telefono con lo
+  stesso account. Nella finestra 📱 comparirà un link «Tailscale (da ovunque)» con un indirizzo `100.x.x.x`: funziona
+  da qualunque rete, il traffico è cifrato e non serve aprire porte sul router.
+- **Port forwarding**: inoltra la porta (8765) del router verso il PC e usa `http://<IP pubblico>:8765/?k=<chiave>`.
+  Funziona, ma il collegamento **non è cifrato** e la pagina è esposta su Internet, protetta solo dalla chiave.
+
 ## Cercare suoni su MyInstants
 
 Premi **Cerca su MyInstants** nella tab Soundboard, scrivi cosa cerchi e premi Invio (oppure
@@ -220,6 +245,8 @@ src/soundboard_vst/
   midi_map.py            mappa MIDI dei controlli e preset dei controller
   youtube.py             link, playlist e ricerca di YouTube (yt-dlp)
   binaries.py            ffmpeg e Deno inclusi
+  remote/server.py       server web del controllo remoto (aiohttp)
+  remote/page.py         pagina web per telefono
   audio/player.py        lettore (coda, decodifica con ffmpeg)
   audio/pitch.py         pitch shifter a bassa latenza
   discord_bot.py         bot Discord (discord.py) che trasmette il canale Soundboard
@@ -247,4 +274,5 @@ esistente: *Actions → Build release → Run workflow* e indica il tag.
 [PySide6](https://doc.qt.io/qtforpython-6/) (interfaccia), [sounddevice](https://python-sounddevice.readthedocs.io/) (audio),
 [pedalboard](https://github.com/spotify/pedalboard) (VST3, effetti, decodifica audio), [NumPy](https://numpy.org/),
 [python-rtmidi](https://github.com/SpotlightKid/python-rtmidi) (MIDI), [discord.py](https://github.com/Rapptz/discord.py) (bot Discord),
-[yt-dlp](https://github.com/yt-dlp/yt-dlp) con [Deno](https://deno.com) (YouTube), [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg) (ffmpeg per la decodifica).
+[yt-dlp](https://github.com/yt-dlp/yt-dlp) con [Deno](https://deno.com) (YouTube), [aiohttp](https://docs.aiohttp.org) e
+[segno](https://github.com/heuer/segno) (controllo remoto e QR code), [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg) (ffmpeg per la decodifica).

@@ -23,6 +23,7 @@ from .config import Config, config_dir
 from .ui import theme
 from .ui.mixer_view import MixerView
 from .ui.player_view import PlayerView
+from .ui.remote_view import RemoteController, RemoteDialog
 from .ui.myinstants_dialog import MyInstantsDialog
 from .ui.settings_dialog import SettingsDialog
 from .ui.sound_dialog import MidiBridge
@@ -80,6 +81,10 @@ class MainWindow(QMainWindow):
         for b in (self.bot_power, self.bot_join, self.bot_leave):
             header.addWidget(b)
         header.addSpacing(8)
+        self.remote_btn = QToolButton(text="📱")
+        self.remote_btn.setToolTip("Controllo remoto: link e QR code per il telefono")
+        self.remote_btn.clicked.connect(self.show_remote)
+        header.addWidget(self.remote_btn)
         header.addWidget(settings_btn)
         header.addWidget(self.audio_btn)
 
@@ -144,6 +149,9 @@ class MainWindow(QMainWindow):
         self._shortcuts: list[QShortcut] = []
         self.apply_bot_shortcuts()
         self._update_bot_buttons()
+        self.remote = RemoteController(self)
+        self.remote.status_changed.connect(self._update_remote_button)
+        self.remote.apply()
         self.midi_bridge = MidiBridge()
         self.midi_bridge.event.connect(self._on_midi)
         self.midi_in = midi.MidiInput()
@@ -321,6 +329,24 @@ class MainWindow(QMainWindow):
         running = self.bot.running
         self.bot_power.setStyleSheet(f"color: {theme.ACCENT_2};" if running else "")
         self.bot_leave.setEnabled(bool(running and self.bot.status.channel))
+
+    def show_remote(self) -> None:
+        if not self.config.data["remote"].get("enabled"):
+            if QMessageBox.question(self, "Controllo remoto",
+                                    "Il controllo remoto è spento. Vuoi attivarlo adesso?") \
+                    != QMessageBox.StandardButton.Yes:
+                return
+            self.config.data["remote"]["enabled"] = True
+            self.remote.apply()
+            self.config.save()
+        RemoteDialog(self.remote, self).exec()
+
+    def _update_remote_button(self) -> None:
+        srv = self.remote.server
+        on = self.config.data["remote"].get("enabled") and srv.running
+        self.remote_btn.setStyleSheet(f"color: {theme.ACCENT_2};" if on else "")
+        self.remote_btn.setToolTip(f"Controllo remoto attivo sulla porta {srv.port}" if on else
+                                   srv.error or "Controllo remoto spento")
 
     def _build_bot_menu(self) -> None:
         m = self._bot_menu
@@ -515,6 +541,9 @@ class MainWindow(QMainWindow):
             self._settings_dialog = None
         if ok:
             self.apply_bot_shortcuts()
+            self.remote.apply()
+            if self.remote.server.error:
+                QMessageBox.warning(self, "Controllo remoto", self.remote.server.error)
             dc = self.config.data["discord"]
             if self.bot.running and (dc["token"] != old_bot.get("token") or dc["owner_id"] != old_bot.get("owner_id")):
                 self.start_bot()
@@ -566,6 +595,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         self.save()
         self.bot.stop()
+        self.remote.stop()
         self.engine.player.close()
         self.player_view.shutdown()
         self.engine.stop()

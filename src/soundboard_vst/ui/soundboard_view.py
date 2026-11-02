@@ -777,10 +777,11 @@ class SoundboardView(QWidget):
         self.import_files([p for p in paths if p.is_file()])
 
     # Riproduzione -----------------------------------------------------------------
-    def play_key(self, key: str) -> None:
+    def play_key(self, key: str, quiet: bool = False) -> None:
         path = self.path_for(key)
         if not path.exists():
-            QMessageBox.warning(self, "Suono", f"«{key}» non è più nella cartella.")
+            if not quiet:
+                QMessageBox.warning(self, "Suono", f"«{key}» non è più nella cartella.")
             return
         self.play_requested.emit(key, path)
 
@@ -826,6 +827,13 @@ class SoundboardView(QWidget):
             self._refresh_library()
             self._rebuild_shortcuts()
             self.changed.emit()
+
+    def play_page_slot(self, page: int, index: int) -> None:
+        """Suona lo slot ``index`` (da 0) della pagina ``page`` (usato dal controllo remoto)."""
+        if 0 <= page < len(self.layout_model.pages):
+            key = self.layout_model.pages[page].slots.get(index)
+            if key is not None:
+                self.play_key(key, quiet=True)
 
     def play_slot(self, number: int) -> None:
         """Suona lo slot ``number`` (da 1) della pagina corrente."""

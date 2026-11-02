@@ -41,6 +41,10 @@ def selftest() -> int:
     assert deno, "Deno non incluso"
     subprocess.run([deno, "--version"], check=True, capture_output=True, **binaries.no_window_kwargs())
 
+    import segno  # noqa: F401  QR code del controllo remoto
+    from aiohttp import web  # noqa: F401  server del controllo remoto
+    from soundboard_vst.remote.server import RemoteServer  # noqa: F401
+
     import sounddevice  # PortAudio deve essere incluso
 
     from soundboard_vst import midi

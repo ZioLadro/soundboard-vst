@@ -23,6 +23,12 @@ INDEX_ROLE = Qt.ItemDataRole.UserRole + 1
 TRACK_ROLE = Qt.ItemDataRole.UserRole + 2
 
 
+def short_error(exc: Exception) -> str:
+    """Messaggio d'errore leggibile (yt-dlp scrive righe lunghissime)."""
+    msg = str(exc).replace("ERROR: ", "").split("; please report", 1)[0]
+    return msg if len(msg) <= 220 else msg[:217] + "…"
+
+
 class _Bridge(QObject):
     player_event = Signal(str)
     tracks_found = Signal(int, list, str)      # id richiesta, brani, modalità ("add" | "search")
@@ -49,6 +55,7 @@ class PlayerView(QWidget):
         player.resolvers["youtube"] = youtube.resolver
         self._request = 0
         self._seeking = False
+        self.last_message = ""
         self.setAcceptDrops(True)
 
         # In riproduzione -----------------------------------------------------------------
@@ -274,6 +281,7 @@ class PlayerView(QWidget):
         self.volume_label.setText(format_db(self.strip.gain_db))
 
     def _set_status(self, text: str, error: bool = False) -> None:
+        self.last_message = text
         self.status.setText(text)
         self.status.setStyleSheet(f"color: {theme.DANGER if error else theme.MUTED};")
 
@@ -284,7 +292,7 @@ class PlayerView(QWidget):
                 self.subtitle.setText(f"Scarico da YouTube… {p * 100:.0f}%")
             return
         if event == "error":
-            self._set_status(self.player.error, error=True)
+            self._set_status(short_error(Exception(self.player.error)), error=True)
         elif event in ("track", "queue"):
             if event == "track":
                 self._set_status("")
@@ -371,11 +379,15 @@ class PlayerView(QWidget):
         self.refresh()
 
     def _submit(self) -> None:
-        text = self.input.text().strip()
+        self.add_from_text(self.input.text())
+
+    def add_from_text(self, text: str, remote: bool = False) -> None:
+        """Link YouTube (video/playlist), percorso o ricerca. Dal telefono la ricerca aggiunge il primo risultato."""
+        text = text.strip()
         if not text:
             return
         p = Path(text.strip('"'))
-        if p.exists():
+        if not remote and p.exists():
             self.input.clear()
             self._add_paths([p])
             return
@@ -389,13 +401,14 @@ class PlayerView(QWidget):
             mode, job = "add", (lambda: youtube.resolve(text))
         else:
             self._set_status(f"Cerco «{text}» su YouTube…")
-            mode, job = "search", (lambda: youtube.search(text))
+            mode = "first" if remote else "search"
+            job = (lambda: youtube.search(text, count=5 if remote else 15))
 
         def run():
             try:
                 self._bridge.tracks_found.emit(rid, job(), mode)
             except Exception as exc:
-                self._bridge.failed.emit(f"YouTube: {str(exc).replace('ERROR: ', '')[:300]}")
+                self._bridge.failed.emit(f"YouTube: {short_error(exc)}")
 
         self._pool.submit(run)
 
@@ -404,6 +417,11 @@ class PlayerView(QWidget):
             return
         if not tracks:
             self._set_status("Nessun risultato.", error=True)
+            return
+        if mode == "first":
+            t = tracks[0]
+            self._set_status(f"Aggiunto «{t.title}» (dal telefono).")
+            self.add_tracks([t])
             return
         if mode == "add":
             self.input.clear()

@@ -6,7 +6,7 @@ from PySide6.QtCore import QRegularExpression, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence, QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QAbstractItemView, QHeaderView, QKeySequenceEdit, QTableWidget, QTableWidgetItem, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
-    QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QScrollArea, QTabWidget, QVBoxLayout, QWidget,
+    QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QScrollArea, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from .. import discord_bot, midi, midi_map
@@ -248,13 +248,47 @@ class SettingsDialog(QDialog):
         row.addWidget(self.vst_dirs, 1)
         row.addLayout(btns)
 
+        # Controllo remoto ------------------------------------------------------------------
+        rc = config.data["remote"]
+        remote_box = QGroupBox("Controllo remoto")
+        rform = QFormLayout(remote_box)
+        self.remote_enabled = QCheckBox("Attiva il controllo da browser (telefono, tablet, altro PC)")
+        self.remote_enabled.setChecked(bool(rc.get("enabled", False)))
+        rform.addRow(self.remote_enabled)
+        self.remote_port = QSpinBox()
+        self.remote_port.setRange(1024, 65535)
+        self.remote_port.setValue(int(rc.get("port", 8765)))
+        rform.addRow("Porta", self.remote_port)
+        self._remote_token = rc.get("token", "")
+        self.remote_token_label = QLabel()
+        self.remote_token_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        new_key = QPushButton("Nuova chiave")
+        new_key.setToolTip("Genera una nuova chiave: i link vecchi smettono di funzionare")
+        new_key.clicked.connect(self._new_remote_token)
+        krow = QHBoxLayout()
+        krow.addWidget(self.remote_token_label, 1)
+        krow.addWidget(new_key)
+        rform.addRow("Chiave di accesso", krow)
+        remote_hint = QLabel(
+            "Dopo aver salvato, il pulsante 📱 in alto mostra il link e il QR code da aprire sul telefono. "
+            "La prima volta Windows può chiedere il permesso per la rete: consenti l'accesso sulle reti private.<br><br>"
+            "<b>Dall'esterno di casa</b>: il modo consigliato è <b>Tailscale</b> (gratuito): installalo sul PC e sul "
+            "telefono con lo stesso account e usa il link «Tailscale», che funziona da ovunque ed è cifrato, senza aprire "
+            "porte sul router. In alternativa puoi inoltrare la porta sul router (port forwarding) e usare il tuo IP "
+            "pubblico: funziona, ma il collegamento non è cifrato e la pagina è esposta su Internet, protetta solo dalla chiave.")
+        remote_hint.setWordWrap(True)
+        remote_hint.setTextFormat(Qt.TextFormat.RichText)
+        remote_hint.setStyleSheet(f"color: {theme.MUTED};")
+        rform.addRow(remote_hint)
+        self._show_remote_token()
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
 
         self.tabs = QTabWidget()
         for box, title in ((audio_box, "Audio"), (midi_box, "MIDI"), (bot_box, "Bot Discord"),
-                           (vst_box, "Plugin VST3")):
+                           (vst_box, "Plugin VST3"), (remote_box, "Controllo remoto")):
             page = QWidget()
             pl = QVBoxLayout(page)
             box.setTitle("")
@@ -418,6 +452,15 @@ class SettingsDialog(QDialog):
         self._stop_map_learn()
         super().done(result)
 
+    def _show_remote_token(self) -> None:
+        t = self._remote_token
+        self.remote_token_label.setText(f"{t[:4]}…{t[-4:]}" if t else "verrà creata al salvataggio")
+
+    def _new_remote_token(self) -> None:
+        from ..remote.server import new_token
+        self._remote_token = new_token()
+        self._show_remote_token()
+
     def _save(self) -> None:
         a = self.config.data["audio"]
         a["host_api"] = self.host_api.currentText()
@@ -436,6 +479,8 @@ class SettingsDialog(QDialog):
             "shortcuts": {k: e.keySequence().toString() for k, e in self.bot_keys.items()},
         }
         self.config.data["midi_map"] = self._map
+        self.config.data["remote"] = {"enabled": self.remote_enabled.isChecked(),
+                                      "port": self.remote_port.value(), "token": self._remote_token}
         self.config.data["midi"] = {"input": self.midi_port.currentData() or "",
                                     "velocity": self.midi_velocity.isChecked()}
         dirs = [self.vst_dirs.item(i).text() for i in range(self.vst_dirs.count())]

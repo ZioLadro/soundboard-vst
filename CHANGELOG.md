@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.5.0 — 2026-11-02
+
+### Novità
+- **Controllo remoto da browser**: server web integrato e pagina per telefono con pad (tutte le pagine, colori,
+  emoji, immagini), player (stato, avanzamento, comandi, volume, coda, aggiunta di link o ricerche YouTube),
+  mixer (volumi e mute) e comandi del bot, più «ferma tutti i suoni».
+- Accesso protetto da chiave (nel link al primo accesso, poi in un cookie), rigenerabile; QR code e link nella
+  finestra 📱; scheda «Controllo remoto» nelle impostazioni con porta e istruzioni per l'accesso esterno
+  (Tailscale consigliato, oppure port forwarding).
+- Messaggi d'errore di YouTube più brevi e leggibili.
+
 ## v0.4.2 — 2026-11-02
 
 ### Correzioni
