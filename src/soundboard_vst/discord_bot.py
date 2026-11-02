@@ -3,6 +3,8 @@
 Il bot gira con discord.py in un thread separato con il suo event loop asyncio.
 L'audio arriva dal motore (uscita del canale Soundboard del mixer) tramite un ring buffer:
 il bot trasmette solo mentre ci sono suoni, così su Discord risulta «parlante» solo quando serve.
+
+I comandi slash e la pulsantiera sono in ``discord_commands``.
 """
 
 from __future__ import annotations
@@ -22,7 +24,8 @@ DISCORD_SR = 48000
 FRAME = 960                          # 20 ms a 48 kHz
 FRAME_BYTES = FRAME * 2 * 2          # stereo, int16
 IDLE_FRAMES = 25                     # 0,5 s di silenzio prima di smettere di trasmettere
-INVITE_PERMISSIONS = (1 << 20) | (1 << 21)   # Connect + Speak
+# Visualizza canale + Invia messaggi (pulsantiera nel canale dedicato) + Connetti + Parla
+INVITE_PERMISSIONS = (1 << 10) | (1 << 11) | (1 << 20) | (1 << 21)
 
 _discord = None
 _error: str | None = None
@@ -61,7 +64,7 @@ def application_id_from_token(token: str) -> int | None:
 
 def invite_url(application_id: int) -> str:
     return ("https://discord.com/oauth2/authorize"
-            f"?client_id={application_id}&scope=bot&permissions={INVITE_PERMISSIONS}")
+            f"?client_id={application_id}&scope=bot+applications.commands&permissions={INVITE_PERMISSIONS}")
 
 
 def find_user_channel(guilds, user_id: int):
@@ -182,12 +185,26 @@ class DiscordBot:
     """Gestisce il client discord.py in un thread; i metodi pubblici si chiamano dal thread della GUI.
 
     ``on_status(BotStatus)`` viene chiamato dal thread del bot: la GUI deve rimbalzarlo
-    sul proprio thread (es. con un segnale Qt).
+    sul proprio thread (es. con un segnale Qt). Lo stesso vale per i comandi da Discord:
+    ``send_command(dict)`` (stesso formato del controllo remoto) e ``on_board(id, messaggi)``,
+    che chiede alla GUI di salvare il canale dedicato. ``get_state()`` restituisce l'istantanea
+    dello stato preparata dalla GUI.
     """
 
-    def __init__(self, engine, on_status: Callable[[BotStatus], None]):
+    def __init__(self, engine, on_status: Callable[[BotStatus], None],
+                 get_state: Callable[[], dict] = dict,
+                 send_command: Callable[[dict], None] = lambda c: None,
+                 on_board: Callable[[int, list], None] = lambda cid, ids: None):
         self.engine = engine
         self.on_status = on_status
+        self.get_state = get_state
+        self.send_command = send_command
+        self.on_board = on_board
+        self.commands_cfg: dict = {"enabled": True, "sounds_access": "everyone",
+                                   "control_access": "owner", "role": ""}
+        self.board_channel: int = 0        # canale dedicato alla pulsantiera (0 = nessuno)
+        self.board_messages: list[int] = []
+        self._commands = None
         self.owner_id: int = 0
         self.follow = True
         self.application_id: int | None = None
@@ -211,6 +228,11 @@ class DiscordBot:
         return self._thread is not None and self._thread.is_alive()
 
     # Avvio / arresto ------------------------------------------------------------------
+    def set_board(self, channel_id: int, message_ids: list[int]) -> None:
+        """Canale dedicato e messaggi della pulsantiera (dal thread del bot): li salva anche la GUI."""
+        self.board_channel, self.board_messages = int(channel_id or 0), [int(m) for m in message_ids]
+        self.on_board(self.board_channel, list(self.board_messages))
+
     def start(self, token: str, owner_id: int, follow: bool = True) -> None:
         discord = _lib()
         if discord is None:
@@ -227,6 +249,10 @@ class DiscordBot:
         intents.voice_states = True
         client = discord.Client(intents=intents)
         bot = self
+        from .discord_commands import Commands
+
+        self._commands = commands = Commands(discord, client, self)
+        synced = set()
 
         @client.event
         async def on_ready():
@@ -234,6 +260,16 @@ class DiscordBot:
             bot._set_status(online=True, message=f"Online come {client.user}")
             if bot.follow:
                 await bot._join_owner()
+            # on_ready si ripete dopo ogni riconnessione: i comandi si registrano una volta sola
+            todo = [g for g in client.guilds if g.id not in synced]
+            synced.update(g.id for g in todo)
+            await commands.sync(todo)
+            commands.start_board_loop()
+
+        @client.event
+        async def on_guild_join(guild):
+            synced.add(guild.id)
+            await commands.sync([guild])
 
         @client.event
         async def on_voice_state_update(member, before, after):
@@ -304,6 +340,7 @@ class DiscordBot:
             self._thread.join(timeout=5)
         self.engine.bot_streaming = False
         self._client = None
+        self._commands = None
         self._thread = None
 
     def _submit(self, coro) -> None:
@@ -311,6 +348,15 @@ class DiscordBot:
             asyncio.run_coroutine_threadsafe(coro, self._loop)
         else:
             coro.close()
+
+    def resync_commands(self) -> None:
+        """Registra di nuovo i comandi (es. dopo averli attivati o disattivati) e aggiorna la pulsantiera."""
+        commands = self._commands
+        if commands is not None and self._client is not None:
+            async def run():
+                await commands.sync()
+                await commands.sync_board(force=True)
+            self._submit(run())
 
     # Canali vocali -----------------------------------------------------------------
     def join_owner(self) -> None:

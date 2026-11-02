@@ -164,7 +164,8 @@ class RemoteServer:
         return web.Response(text=PAGE_HTML, content_type="text/html", charset="utf-8")
 
     async def _state(self, request: web.Request) -> web.Response:
-        return web.json_response(self.get_state())
+        state = {k: v for k, v in self.get_state().items() if k != "library"}   # la pagina non la usa
+        return web.json_response(state)
 
     async def _command(self, request: web.Request) -> web.Response:
         try:

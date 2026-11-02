@@ -16,7 +16,7 @@ def test_application_id_from_token():
     first = base64.urlsafe_b64encode(b"123456789012345678").decode().rstrip("=")
     assert application_id_from_token(f"{first}.GhIjK.abcdef") == 123456789012345678
     assert application_id_from_token("non-valido") is None
-    assert "client_id=42" in invite_url(42) and "permissions=3145728" in invite_url(42)
+    assert "client_id=42" in invite_url(42) and "permissions=3148800" in invite_url(42)
 
 
 def test_to_pcm_interleaves_and_clips():

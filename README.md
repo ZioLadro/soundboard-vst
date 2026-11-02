@@ -21,6 +21,7 @@ la tua voce **più** i suoni, già mixati ed elaborati.
 - **Controllo remoto da browser**: una pagina per telefono o tablet con pad, player (anche link YouTube), mixer e
   comandi del bot, protetta da una chiave; si apre inquadrando un QR code. Dall'esterno funziona con Tailscale.
 - **Bot Discord integrato**: il bot entra nel canale vocale in cui ti trovi (e ti segue se cambi canale) e riproduce i suoni che premi, con gli effetti e il fader del canale Soundboard. Per i suoni non serve VB-Cable.
+- **Comandi e pulsantiera su Discord**: `/suona`, `/pulsantiera` (i pad come pulsanti in un messaggio), un **canale dedicato** con tutti i pad sempre aggiornati, e comandi per player, volume ed entrata/uscita del bot, con permessi per ruolo.
 - **Ingresso**: scegli microfono o scheda audio.
 - **Uscita verso Discord**: il mix va su un cavo audio virtuale, che gli altri programmi vedono come microfono.
 - **Monitor**: uscita separata per le cuffie, per sentire i suoni (e, se vuoi, te stesso).
@@ -108,7 +109,8 @@ Discord normale, e per i suoni non serve il cavo virtuale.
 1. **Crea il bot**: apri il [portale sviluppatori](https://discord.com/developers/applications) →
    *New Application* → sezione **Bot** → **Reset Token** e copia il token (non serve attivare nessun intent privilegiato).
 2. **Impostazioni → Bot Discord**: incolla il token e premi **Invita il bot nel server…**, scegli il server e conferma
-   (il bot chiede solo i permessi *Connetti* e *Parla*).
+   (il bot chiede i permessi *Connetti* e *Parla*, *Visualizza canale* e *Invia messaggi* per la pulsantiera,
+   e l'uso dei comandi slash).
 3. **Il tuo ID utente**: in Discord attiva *Impostazioni → Avanzate → Modalità sviluppatore*, poi tasto destro sul tuo
    nome → **Copia ID utente** e incollalo nelle impostazioni.
 4. Dal pulsante ⏻ in alto (o dal menu 🤖) avvia il bot. Con «Segui me» attivo entra nel tuo canale, ti segue quando cambi
@@ -134,6 +136,32 @@ Note:
   Il menu 🤖 mostra l'ultima latenza interna misurata.
 - Usa discord.py 2.7 con il supporto alla crittografia end-to-end della voce (DAVE), obbligatoria su Discord.
 - Il token è salvato in chiaro in `%APPDATA%\SoundboardVST\config.json`: chi lo ha può controllare il bot, quindi non condividere quel file. Se il token esce per sbaglio, rigeneralo dal portale.
+
+## Comandi e pulsantiera su Discord
+
+Con il bot online, in qualsiasi canale di testo del server:
+
+| Comando | Cosa fa |
+|---------|---------|
+| `/suona suono:` | Riproduce un suono; mentre scrivi suggerisce i nomi (anche i suoni non sui pad) |
+| `/stop` | Ferma tutti i suoni |
+| `/pulsantiera [pagina] [privata]` | Pubblica i pad come pulsanti, 20 alla volta, con ◀ ▶ per scorrere pagine, ■ stop e ↻ aggiorna. Con `privata` la vedi solo tu |
+| `/canale-pulsantiera` | **Usa questo canale**: il bot ci tiene tutti i pad (25 per messaggio) più stop e comandi del player, e li aggiorna da solo quando cambi i pad. **Rimuovi** cancella i messaggi |
+| `/entra` · `/esci` | Il bot entra nel canale vocale di chi scrive il comando, o esce |
+| `/player` · `/riproduci` | Play/pausa, stop, successivo, precedente · aggiunge un link o una ricerca di YouTube |
+| `/volume canale: db:` | Volume di un canale del mixer, da −60 a +12 dB |
+| `/aiuto` | Elenco dei comandi |
+
+I colori dei pulsanti seguono quelli dei pad (rosso, verde, blu o grigio: Discord ha solo questi quattro) e l'emoji compare nel testo. I pulsanti funzionano anche dopo aver riavviato la soundboard. Per il canale dedicato conviene un canale in cui solo il bot può scrivere.
+
+**Permessi** (Impostazioni → Bot Discord):
+
+- *Chi può suonare*: pad, `/suona`, `/stop`, `/pulsantiera`. Predefinito: **chiunque nel server**.
+- *Chi può controllare*: `/entra`, `/esci`, player, `/riproduci`, `/volume`, `/canale-pulsantiera`. Predefinito: **solo io**.
+- Per entrambi puoi scegliere «Solo io», «Io e chi ha il ruolo indicato» (nome o ID del ruolo) o «Chiunque nel server». Il proprietario (il tuo ID utente) può sempre usare tutto.
+- Se disattivi «Comandi da Discord», il bot li toglie dai server.
+
+**Bot invitato con una versione precedente**: invitalo di nuovo con «Invita il bot nel server…» (non serve toglierlo prima). Il nuovo link aggiunge i comandi e i permessi *Visualizza canale* e *Invia messaggi* per il canale dedicato. I comandi compaiono subito nei server in cui c'è il bot; se Discord non li mostra, riavvia il client Discord (Ctrl+R).
 
 ## MIDI
 
@@ -250,6 +278,7 @@ src/soundboard_vst/
   audio/player.py        lettore (coda, decodifica con ffmpeg)
   audio/pitch.py         pitch shifter a bassa latenza
   discord_bot.py         bot Discord (discord.py) che trasmette il canale Soundboard
+  discord_commands.py    comandi slash, pulsantiera e canale dedicato del bot
   audio/engine.py        motore audio: stream, mix, routing
   audio/mixer.py         canale del mixer (inserti, fader, mute, meter)
   audio/plugins.py       inserti: effetti integrati e VST3
