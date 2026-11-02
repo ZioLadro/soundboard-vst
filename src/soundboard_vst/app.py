@@ -6,13 +6,13 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QObject, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton, QTabWidget, QToolButton,
     QVBoxLayout, QWidget,
 )
 
-from . import APP_NAME, __version__, discord_bot, midi
+from . import APP_NAME, __version__, discord_bot, midi, midi_map
 from .audio import devices
 from .audio.engine import AudioEngine
 from .audio.library import SoundCache, decode
@@ -21,6 +21,7 @@ from .discord_bot import DiscordBot
 from .config import Config, config_dir
 from .ui import theme
 from .ui.mixer_view import MixerView
+from .ui.player_view import PlayerView
 from .ui.myinstants_dialog import MyInstantsDialog
 from .ui.settings_dialog import SettingsDialog
 from .ui.sound_dialog import MidiBridge
@@ -69,6 +70,15 @@ class MainWindow(QMainWindow):
         self._bot_menu.aboutToShow.connect(self._build_bot_menu)
         self.bot_btn.setMenu(self._bot_menu)
         header.addWidget(self.bot_btn)
+        self.bot_power = QToolButton(text="⏻")
+        self.bot_power.clicked.connect(self.toggle_bot)
+        self.bot_join = QToolButton(text="Entra")
+        self.bot_join.clicked.connect(self.join_bot)
+        self.bot_leave = QToolButton(text="Esci")
+        self.bot_leave.clicked.connect(self.leave_bot)
+        for b in (self.bot_power, self.bot_join, self.bot_leave):
+            header.addWidget(b)
+        header.addSpacing(8)
         header.addWidget(settings_btn)
         header.addWidget(self.audio_btn)
 
@@ -90,7 +100,13 @@ class MainWindow(QMainWindow):
         self.tabs.setObjectName("mainTabs")
         self.tabs.setDocumentMode(True)
         self.tabs.tabBar().setDrawBase(False)
+        self.engine.player.load_dict(config.data.get("player", {}))
+        self.player_view = PlayerView(self.engine.player, self.engine.player_strip)
+        self.player_view.changed.connect(self.schedule_save)
+        self.player_view.level_changed.connect(lambda: (self.mixer.sync_levels(), self.schedule_save()))
+
         self.tabs.addTab(self.board, "Soundboard")
+        self.tabs.addTab(self.player_view, "Player")
         self.tabs.addTab(mixer_page, "Mixer")
         self.tabs.currentChanged.connect(lambda _: self.schedule_save())
         self._myinstants: MyInstantsDialog | None = None
@@ -121,6 +137,11 @@ class MainWindow(QMainWindow):
         self.bot_signals = BotSignals()
         self.bot_signals.status.connect(self._on_bot_status)
         self.bot = DiscordBot(self.engine, self.bot_signals.status.emit)
+        self.player_view.started.connect(self.bot.notify_sound)
+        self._settings_dialog = None
+        self._shortcuts: list[QShortcut] = []
+        self.apply_bot_shortcuts()
+        self._update_bot_buttons()
         self.midi_bridge = MidiBridge()
         self.midi_bridge.event.connect(self._on_midi)
         self.midi_in = midi.MidiInput()
@@ -229,6 +250,59 @@ class MainWindow(QMainWindow):
             owner = 0
         self.bot.start(dc["token"], owner, dc.get("follow", True))
 
+    def toggle_bot(self) -> None:
+        if self.bot.running:
+            self.bot.stop()
+            self._update_bot_buttons()
+        else:
+            self.start_bot()
+
+    def join_bot(self) -> None:
+        if not self.bot.running:
+            self.start_bot()        # con «Segui me» entra da solo appena è online
+            if not self.config.data["discord"].get("follow", True):
+                QTimer.singleShot(4000, self.bot.join_owner)
+        else:
+            self.bot.join_owner()
+
+    def leave_bot(self) -> None:
+        if self.bot.running:
+            self.bot.leave()
+
+    def toggle_follow(self) -> None:
+        dc = self.config.data["discord"]
+        dc["follow"] = not dc.get("follow", True)
+        self.bot.follow = dc["follow"]
+        self.statusBar().showMessage("Bot: «Segui me» " + ("attivo" if dc["follow"] else "disattivato"), 4000)
+        if dc["follow"] and self.bot.running:
+            self.bot.join_owner()
+        self.schedule_save()
+
+    def apply_bot_shortcuts(self) -> None:
+        for sc in self._shortcuts:
+            sc.setEnabled(False)
+            sc.deleteLater()
+        self._shortcuts = []
+        keys = self.config.data["discord"].get("shortcuts", {})
+        actions = {"toggle": self.toggle_bot, "join": self.join_bot, "leave": self.leave_bot,
+                   "follow": self.toggle_follow}
+        for name, fn in actions.items():
+            seq = keys.get(name, "")
+            if seq:
+                sc = QShortcut(QKeySequence(seq), self)
+                sc.setContext(Qt.ShortcutContext.ApplicationShortcut)
+                sc.activated.connect(fn)
+                self._shortcuts.append(sc)
+        tip = lambda text, name: text + (f"  ({keys[name]})" if keys.get(name) else "")
+        self.bot_power.setToolTip(tip("Avvia / ferma il bot", "toggle"))
+        self.bot_join.setToolTip(tip("Fai entrare il bot nel tuo canale vocale", "join"))
+        self.bot_leave.setToolTip(tip("Fai uscire il bot dal canale", "leave"))
+
+    def _update_bot_buttons(self) -> None:
+        running = self.bot.running
+        self.bot_power.setStyleSheet(f"color: {theme.ACCENT_2};" if running else "")
+        self.bot_leave.setEnabled(bool(running and self.bot.status.channel))
+
     def _build_bot_menu(self) -> None:
         m = self._bot_menu
         m.clear()
@@ -238,6 +312,9 @@ class MainWindow(QMainWindow):
             a.setEnabled(False)
         elif self.bot.running:
             m.addAction("Entra nel mio canale", self.bot.join_owner)
+            follow = m.addAction("Segui me", self.toggle_follow)
+            follow.setCheckable(True)
+            follow.setChecked(bool(self.config.data["discord"].get("follow", True)))
             leave = m.addAction("Esci dal canale", self.bot.leave)
             leave.setEnabled(bool(st.channel))
             m.addSeparator()
@@ -265,6 +342,7 @@ class MainWindow(QMainWindow):
             text = "🤖  Bot già in uso"
         self.bot_btn.setText(text)
         self.bot_btn.setToolTip(st.message)
+        self._update_bot_buttons()
         if st.conflict and not self._bot_conflict_shown:
             self._bot_conflict_shown = True
             QMessageBox.warning(self, "Bot già in uso", st.message)
@@ -299,7 +377,14 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Controller MIDI non trovato: {name}", 8000)
 
     def _on_midi(self, ev) -> None:
-        if self.board.is_learning:
+        if self.board.is_learning or (self._settings_dialog is not None and self._settings_dialog.learning):
+            return
+        targets = midi_map.targets_for(self.config.data.get("midi_map", {}), ev)
+        if targets:
+            for t in targets:
+                self._run_target(t, ev)
+            return
+        if ev.kind == "cc" and not ev.pressed:
             return
         key = self.board.key_for_midi(ev)
         if key is None:
@@ -309,6 +394,50 @@ class MainWindow(QMainWindow):
             return
         scale = ev.value / 127.0 if self.config.data["midi"].get("velocity") else 1.0
         self.play_sound(key, path, scale)
+
+    def _run_target(self, target, ev) -> None:
+        """Esegue un'azione della mappa MIDI."""
+        tid = target.id
+        if target.kind == "continuous":
+            if ev.kind != "cc":
+                return
+            _, sid, _ = tid.split(":")
+            self.engine.strip(sid).gain_db = midi_map.cc_to_db(ev.value)
+            self.mixer.sync_levels()
+            self.schedule_save()
+            return
+        if not ev.pressed:
+            return
+        player = self.engine.player
+        if tid.startswith("strip:") and tid.endswith(":mute"):
+            strip = self.engine.strip(tid.split(":")[1])
+            strip.mute = not strip.mute
+            self.mixer.sync_levels()
+            self.schedule_save()
+        elif tid == "player:toggle":
+            player.toggle() if player.tracks else None
+        elif tid == "player:stop":
+            player.stop()
+        elif tid == "player:next":
+            player.next()
+        elif tid == "player:prev":
+            player.prev()
+        elif tid == "sounds:stop":
+            self.engine.stop_sounds()
+        elif tid.startswith("pads:slot:"):
+            self.board.play_slot(int(tid.rsplit(":", 1)[1]))
+        elif tid == "pads:page_next":
+            self.board.change_page(1)
+        elif tid == "pads:page_prev":
+            self.board.change_page(-1)
+        elif tid == "bot:toggle":
+            self.toggle_bot()
+        elif tid == "bot:join":
+            self.join_bot()
+        elif tid == "bot:leave":
+            self.leave_bot()
+        elif tid == "bot:follow":
+            self.toggle_follow()
 
     # MyInstants -------------------------------------------------------------------------
     def open_myinstants(self) -> None:
@@ -352,9 +481,15 @@ class MainWindow(QMainWindow):
     # Impostazioni / salvataggio -----------------------------------------------------
     def open_settings(self, tab: int = 0) -> None:
         old_bot = dict(self.config.data["discord"])
-        dlg = SettingsDialog(self.config, self)
+        dlg = SettingsDialog(self.config, self, midi_bridge=self.midi_bridge)
         dlg.tabs.setCurrentIndex(tab)
-        if dlg.exec():
+        self._settings_dialog = dlg
+        try:
+            ok = dlg.exec()
+        finally:
+            self._settings_dialog = None
+        if ok:
+            self.apply_bot_shortcuts()
             dc = self.config.data["discord"]
             if self.bot.running and (dc["token"] != old_bot.get("token") or dc["owner_id"] != old_bot.get("owner_id")):
                 self.start_bot()
@@ -371,6 +506,7 @@ class MainWindow(QMainWindow):
 
     def save(self) -> None:
         self.config.data["mixer"] = self.engine.to_dict()
+        self.config.data["player"] = self.engine.player.to_dict()
         self.config.data["window"] = {
             "geometry": bytes(self.saveGeometry().toBase64()).decode(),
             "library_splitter": bytes(self.board.splitter.saveState().toBase64()).decode(),
@@ -401,6 +537,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         self.save()
         self.bot.stop()
+        self.engine.player.close()
+        self.player_view.shutdown()
         self.engine.stop()
         self.midi_in.close()
         super().closeEvent(event)

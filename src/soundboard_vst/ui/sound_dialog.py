@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, Qt, Signal
-from PySide6.QtGui import QColor, QKeySequence
+from PySide6.QtGui import QColor, QImage, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
-    QColorDialog, QDialog, QDialogButtonBox, QFormLayout, QGridLayout, QHBoxLayout, QKeySequenceEdit,
+    QColorDialog, QDialog, QDialogButtonBox, QFileDialog, QMessageBox, QFormLayout, QGridLayout, QHBoxLayout, QKeySequenceEdit,
     QLabel, QLineEdit, QPushButton, QSlider, QToolButton, QVBoxLayout, QWidget,
 )
 
+import hashlib
+from pathlib import Path
+
 from .. import midi
+from ..config import config_dir
 from . import theme
 
 PALETTE = [
@@ -23,6 +27,21 @@ QUICK_EMOJI = [
     "🔥", "💥", "⚡", "🎉", "👏", "👍", "👎", "❤️",
     "🥁", "🎺", "📯", "🎵", "🔔", "🚨", "🐐", "🦆",
 ]
+
+
+def store_image(src: Path) -> Path:
+    """Copia l'immagine nella cartella dati del programma, ridotta a 512 px, e ne restituisce il percorso."""
+    img = QImage(str(src))
+    if img.isNull():
+        raise ValueError("formato non supportato")
+    if max(img.width(), img.height()) > 512:
+        img = img.scaled(512, 512, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    folder = config_dir() / "images"
+    folder.mkdir(parents=True, exist_ok=True)
+    dest = folder / f"{hashlib.sha1(src.read_bytes()).hexdigest()[:16]}.png"
+    if not img.save(str(dest), "PNG"):
+        raise OSError("salvataggio non riuscito")
+    return dest
 
 
 class MidiBridge(QObject):
@@ -45,6 +64,31 @@ class SoundSettingsDialog(QDialog):
         self._midi_port = midi_port
         self._learning = False
         self.color: str = settings.get("color", "") or ""
+        self.image: str = settings.get("image", "") or ""
+
+        # Nome sul pad -------------------------------------------------------------
+        self.label = QLineEdit(settings.get("label", ""))
+        self.label.setPlaceholderText(name)
+        self.label.setToolTip("Nome mostrato sul pad (il file non viene rinominato). Vuoto = nome del file.")
+
+        # Immagine ------------------------------------------------------------------
+        self.image_preview = QLabel()
+        self.image_preview.setFixedSize(72, 72)
+        self.image_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_preview.setStyleSheet(f"background: {theme.PANEL_2}; border: 1px solid {theme.BORDER};"
+                                         "border-radius: 8px;")
+        img_choose = QPushButton("Scegli…")
+        img_choose.clicked.connect(self._choose_image)
+        img_clear = QPushButton("Togli")
+        img_clear.clicked.connect(lambda: self._set_image(""))
+        ibtns = QVBoxLayout()
+        ibtns.addWidget(img_choose)
+        ibtns.addWidget(img_clear)
+        ibtns.addStretch(1)
+        irow = QHBoxLayout()
+        irow.addWidget(self.image_preview)
+        irow.addLayout(ibtns)
+        irow.addStretch(1)
         self.midi_binding: dict | None = settings.get("midi") or None
 
         # Volume -------------------------------------------------------------------
@@ -144,6 +188,8 @@ class SoundSettingsDialog(QDialog):
             self.midi_hint.setText(f"Controller: {midi_port}")
 
         form = QFormLayout()
+        form.addRow("Nome sul pad", self.label)
+        form.addRow("Immagine", irow)
         form.addRow("Volume", vrow)
         form.addRow("Colore", color_box)
         form.addRow("Icona", ebox)
@@ -158,6 +204,28 @@ class SoundSettingsDialog(QDialog):
 
         self._set_color(self.color)
         self._set_midi(self.midi_binding)
+        self._set_image(self.image)
+
+    # Immagine ---------------------------------------------------------------------------
+    def _set_image(self, path: str) -> None:
+        self.image = path
+        pix = QPixmap(path) if path else QPixmap()
+        if pix.isNull():
+            self.image_preview.setPixmap(QPixmap())
+            self.image_preview.setText("nessuna")
+        else:
+            self.image_preview.setPixmap(pix.scaled(70, 70, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                                    Qt.TransformationMode.SmoothTransformation))
+
+    def _choose_image(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Immagine del pad", "",
+                                              "Immagini (*.png *.jpg *.jpeg *.gif *.webp *.bmp)")
+        if not path:
+            return
+        try:
+            self._set_image(str(store_image(Path(path))))
+        except Exception as exc:
+            QMessageBox.warning(self, "Immagine", f"Impossibile usare l'immagine:\n{exc}")
 
     # Colore ---------------------------------------------------------------------------
     def _set_color(self, color: str) -> None:
@@ -217,6 +285,8 @@ class SoundSettingsDialog(QDialog):
 
     def values(self) -> dict:
         return {
+            "label": self.label.text().strip(),
+            "image": self.image,
             "volume": self.volume.value() / 100.0,
             "shortcut": self.shortcut.keySequence().toString(),
             "color": self.color,

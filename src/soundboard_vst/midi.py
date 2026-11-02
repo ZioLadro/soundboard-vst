@@ -48,19 +48,24 @@ class MidiEvent:
     number: int      # nota o numero del controllo
     value: int       # velocity o valore del controllo
 
+    @property
+    def pressed(self) -> bool:
+        return self.value > 0
+
     def binding(self) -> dict:
         return {"type": self.kind, "channel": self.channel, "number": self.number}
 
 
 def parse(message: list[int]) -> MidiEvent | None:
-    """Interpreta un messaggio MIDI grezzo; considera solo note on e CC > 0."""
+    """Interpreta un messaggio MIDI grezzo: note on (velocity > 0) e tutti i CC (anche valore 0,
+    che serve ai fader; per le azioni a pulsante si usa solo il valore > 0)."""
     if len(message) < 3:
         return None
     status, d1, d2 = message[0], message[1], message[2]
     kind, channel = status & 0xF0, (status & 0x0F) + 1
     if kind == 0x90 and d2 > 0:
         return MidiEvent("note", channel, d1, d2)
-    if kind == 0xB0 and d2 > 0:
+    if kind == 0xB0:
         return MidiEvent("cc", channel, d1, d2)
     return None
 

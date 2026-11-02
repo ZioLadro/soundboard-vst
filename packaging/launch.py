@@ -28,6 +28,19 @@ def selftest() -> int:
     if sys.platform == "win32":
         discord.opus._load_default()
         assert discord.opus.is_loaded(), "libopus non inclusa"
+    import subprocess
+
+    import yt_dlp  # noqa: F401
+    import yt_dlp_ejs  # noqa: F401  componente JavaScript di yt-dlp per YouTube
+    from soundboard_vst import binaries
+
+    ffmpeg = binaries.ffmpeg_exe()
+    assert ffmpeg, "ffmpeg non incluso"
+    subprocess.run([ffmpeg, "-version"], check=True, capture_output=True, **binaries.no_window_kwargs())
+    deno = binaries.deno_exe()
+    assert deno, "Deno non incluso"
+    subprocess.run([deno, "--version"], check=True, capture_output=True, **binaries.no_window_kwargs())
+
     import sounddevice  # PortAudio deve essere incluso
 
     from soundboard_vst import midi

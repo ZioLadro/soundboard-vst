@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.4.0 — 2026-11-02
+
+### Novità
+- **Player**: tab dedicata con coda di file, cartelle, playlist `.m3u`, video e playlist di YouTube e ricerca su
+  YouTube; play/pausa, seek, precedente/successivo, ripeti, casuale; coda salvata alla chiusura.
+- Canale **Player** nel mixer (con inserti), instradato a Discord (bot o cavo virtuale) e al monitor.
+- **Mappa MIDI** dei controlli: volumi e mute dei canali, player, pad della pagina corrente, pagine e bot, con
+  «Impara» e preset per **Nektar Impact LX25+**. I CC a valore 0 ora arrivano (servono ai fader).
+- **Pitch shifter** a bassa latenza tra gli effetti integrati (quello di pedalboard ha ~1 s di latenza).
+- Pad: **nome personalizzato** e **immagine** (ritagliata e velata per leggere il nome).
+- Bot: pulsanti rapidi ⏻ / Entra / Esci, scorciatoie da tastiera configurabili e «Segui me» attivabile al volo.
+
+### Correzioni
+- Gli inserti gestiscono i plugin che restituiscono blocchi di lunghezza variabile (plugin con latenza).
+
+### Build
+- L'eseguibile include ffmpeg, Deno e yt-dlp con il componente EJS; il self-test li avvia per verificarli.
+
 ## v0.3.1 — 2026-11-02
 
 ### Correzioni

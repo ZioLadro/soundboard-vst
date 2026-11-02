@@ -9,7 +9,8 @@ from PySide6.QtCore import (
     QFile, QFileSystemWatcher, QMimeData, QPoint, QRectF, Qt, QTimer, QUrl, Signal,
 )
 from PySide6.QtGui import (
-    QColor, QDesktopServices, QDrag, QFont, QKeySequence, QPainter, QPen, QShortcut,
+    QColor, QDesktopServices, QDrag, QFont, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen,
+    QFontMetrics, QPixmap, QShortcut,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog,
@@ -31,6 +32,26 @@ KEY_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
 # Pad ------------------------------------------------------------------------------
+_PIXMAPS: dict[str, tuple[float, QPixmap | None]] = {}
+
+
+def _load_pixmap(path: str) -> QPixmap | None:
+    try:
+        mtime = Path(path).stat().st_mtime
+    except OSError:
+        return None
+    hit = _PIXMAPS.get(path)
+    if hit and hit[0] == mtime:
+        return hit[1]
+    pix = QPixmap(path)
+    if pix.isNull():
+        pix = None
+    elif max(pix.width(), pix.height()) > 512:   # le immagini grandi si ridimensionano una volta sola
+        pix = pix.scaled(512, 512, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    _PIXMAPS[path] = (mtime, pix)
+    return pix
+
+
 class PadButton(QWidget):
     clicked = Signal(int)
     menu_requested = Signal(int, QPoint)
@@ -49,6 +70,7 @@ class PadButton(QWidget):
         self.color = ""
         self.emoji = ""
         self.midi_label = ""
+        self.image = ""
         self._hover = False
         self._press_pos: QPoint | None = None
         self.setAcceptDrops(True)
@@ -58,9 +80,10 @@ class PadButton(QWidget):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def set_sound(self, key: str | None, label: str, shortcut: str, missing: bool,
-                  color: str = "", emoji: str = "", midi_label: str = "") -> None:
+                  color: str = "", emoji: str = "", midi_label: str = "", image: str = "") -> None:
         self.key, self.label, self.shortcut, self.missing = key, label, shortcut, missing
         self.color, self.emoji, self.midi_label = color, emoji, midi_label
+        self.image = image
         tip = "Slot vuoto: clic o trascina qui un suono" if key is None else \
             f"{key}\nClic: riproduci · Trascina: sposta · Tasto destro: opzioni"
         if midi_label:
@@ -116,6 +139,32 @@ class PadButton(QWidget):
         p.setBrush(bg)
         p.drawRoundedRect(r, 9, 9)
 
+        pix = _load_pixmap(self.image) if self.image else None
+        if pix is not None:
+            # immagine a riempimento, ritagliata con gli angoli arrotondati e velata in basso
+            path = QPainterPath()
+            path.addRoundedRect(r.adjusted(1, 1, -1, -1), 8, 8)
+            p.save()
+            p.setClipPath(path)
+            scaled = pix.scaled(int(r.width()), int(r.height()), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                Qt.TransformationMode.SmoothTransformation)
+            p.drawPixmap(int(r.left() + (r.width() - scaled.width()) / 2),
+                         int(r.top() + (r.height() - scaled.height()) / 2), scaled)
+            veil = QLinearGradient(0, r.top(), 0, r.bottom())
+            veil.setColorAt(0.0, QColor(0, 0, 0, 40))
+            veil.setColorAt(0.5, QColor(0, 0, 0, 30))
+            veil.setColorAt(1.0, QColor(0, 0, 0, 200))
+            p.fillRect(r, veil)
+            if self.playing:
+                p.fillRect(r, QColor(255, 255, 255, 50))
+            p.restore()
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(QColor(theme.ACCENT if not self.color else self.color), 3) if self.playing
+                     else QPen(QColor(theme.ACCENT) if self._hover else QColor(0, 0, 0, 0), 1.5))
+            p.drawRoundedRect(r, 9, 9)
+            fg = QColor("#ffffff")
+            muted = QColor(255, 255, 255, 190)
+
         small = QFont(self.font())
         small.setPointSizeF(max(7.0, self.font().pointSizeF() - 2))
         p.setFont(small)
@@ -129,7 +178,12 @@ class PadButton(QWidget):
                        fm.elidedText(footer, Qt.TextElideMode.ElideRight, int(r.width()) - 12))
 
         content = r.adjusted(8, 12, -8, -14 if footer else -8)
-        if self.emoji:
+        if pix is not None:
+            # con l'immagine il nome va in basso, sopra la velatura
+            lh = QFontMetrics(QFont(self.font())).height()
+            content = QRectF(content.left(), content.bottom() - lh * 1.4 - (3 if footer else 0),
+                             content.width(), lh * 1.4)
+        elif self.emoji:
             esize = max(10.0, min(content.height() * 0.45, content.width() * 0.4))
             ef = QFont(self.font())
             ef.setPixelSize(int(esize))
@@ -144,7 +198,10 @@ class PadButton(QWidget):
         p.setFont(f)
         p.setPen(QColor(theme.DANGER) if self.missing else fg)
         flags = Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap
-        if self.emoji and content.height() < p.fontMetrics().height() * 2:
+        if pix is not None:
+            text = p.fontMetrics().elidedText(self.label, Qt.TextElideMode.ElideRight, int(content.width()))
+            p.drawText(content, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom, text)
+        elif self.emoji and content.height() < p.fontMetrics().height() * 2:
             text = p.fontMetrics().elidedText(self.label, Qt.TextElideMode.ElideRight, int(content.width()))
             p.drawText(content, Qt.AlignmentFlag.AlignCenter, text)
         else:
@@ -447,8 +504,9 @@ class SoundboardView(QWidget):
     def _refresh_library(self) -> None:
         self.library.clear()
         for k in self._keys:
-            emoji = self.config.data["sounds"].get(k, {}).get("emoji", "")
-            it = QListWidgetItem(f"{emoji}  {Path(k).stem}" if emoji else Path(k).stem)
+            cfg = self.config.data["sounds"].get(k, {})
+            emoji, name = cfg.get("emoji", ""), cfg.get("label") or Path(k).stem
+            it = QListWidgetItem(f"{emoji}  {name}" if emoji else name)
             it.setData(KEY_ROLE, k)
             on_pad = self.layout_model.contains(k)
             if not on_pad:
@@ -496,9 +554,9 @@ class SoundboardView(QWidget):
                 pad.set_sound(None, "", "", False)
             else:
                 cfg = sounds_cfg.get(key, {})
-                pad.set_sound(key, Path(key).stem, cfg.get("shortcut", ""), key not in existing,
-                              cfg.get("color", ""), cfg.get("emoji", ""),
-                              midi.binding_label(cfg.get("midi")))
+                pad.set_sound(key, cfg.get("label") or Path(key).stem, cfg.get("shortcut", ""),
+                              key not in existing, cfg.get("color", ""), cfg.get("emoji", ""),
+                              midi.binding_label(cfg.get("midi")), cfg.get("image", ""))
 
     def _on_grid_size(self) -> None:
         self.layout_model.resize(self.rows_spin.currentData(), self.cols_spin.currentData())
@@ -621,7 +679,7 @@ class SoundboardView(QWidget):
         else:
             m.addAction("▶  Riproduci", lambda: self.play_key(key))
             m.addAction("Cambia suono…", lambda: self._choose_for_pad(index))
-            m.addAction("Volume, colore e MIDI…", lambda: self._edit_settings(key))
+            m.addAction("Personalizza (nome, immagine, colore, MIDI)…", lambda: self._edit_settings(key))
             m.addAction("Togli dal pad", lambda: self._clear_pad(index))
             m.addSeparator()
             if key in self._keys:
@@ -643,7 +701,7 @@ class SoundboardView(QWidget):
             path = self.path_for(key)
             m.addAction("▶  Riproduci", lambda: self.play_key(key))
             m.addAction("Metti nel primo pad libero", lambda: self.place_on_pad(key))
-            m.addAction("Volume, colore e MIDI…", lambda: self._edit_settings(key))
+            m.addAction("Personalizza (nome, immagine, colore, MIDI)…", lambda: self._edit_settings(key))
             m.addAction("Rinomina…", lambda: self._rename(path))
             m.addSeparator()
             m.addAction("Sposta nel cestino", lambda: self._trash(path))
@@ -766,6 +824,17 @@ class SoundboardView(QWidget):
             self._refresh_library()
             self._rebuild_shortcuts()
             self.changed.emit()
+
+    def play_slot(self, number: int) -> None:
+        """Suona lo slot ``number`` (da 1) della pagina corrente."""
+        key = self.layout_model.page.slots.get(number - 1)
+        if key is not None:
+            self.play_key(key)
+
+    def change_page(self, delta: int) -> None:
+        n = len(self.layout_model.pages)
+        if n > 1:
+            self.pages.setCurrentIndex((self.layout_model.current + delta) % n)
 
     @property
     def is_learning(self) -> bool:

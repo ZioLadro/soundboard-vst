@@ -120,6 +120,12 @@ QTabBar#pages::tab {{
 }}
 QTabBar#pages::tab:selected {{ background: {PANEL_2}; color: {TEXT}; border-color: {ACCENT}; }}
 
+QTableWidget {{ background: {BG}; border: 1px solid {BORDER}; border-radius: 6px; gridline-color: {PANEL_2}; }}
+QTableWidget::item {{ padding: 2px 6px; }}
+QHeaderView::section {{
+    background: {PANEL_2}; color: {MUTED}; border: none; border-bottom: 1px solid {BORDER}; padding: 4px 6px;
+}}
+QTableCornerButton::section {{ background: {PANEL_2}; border: none; }}
 QListWidget#library {{ background: {BG}; border: 1px solid {BORDER}; border-radius: 6px; }}
 QListWidget#library::item {{ padding: 5px 8px; border-radius: 4px; }}
 QListWidget#library::item:selected {{ background: {PANEL_2}; color: {TEXT}; }}

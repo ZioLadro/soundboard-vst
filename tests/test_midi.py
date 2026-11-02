@@ -14,7 +14,8 @@ def test_parse_note_on_off_and_cc():
     assert parse([0x90, 60, 0]) is None        # note on con velocity 0 = note off
     assert parse([0x80, 60, 64]) is None       # note off
     assert parse([0xB2, 20, 127]) == MidiEvent("cc", 3, 20, 127)
-    assert parse([0xB2, 20, 0]) is None        # rilascio del pulsante
+    assert parse([0xB2, 20, 0]) == MidiEvent("cc", 3, 20, 0)   # fader a zero / rilascio
+    assert not parse([0xB2, 20, 0]).pressed
     assert parse([0xF8]) is None
 
 

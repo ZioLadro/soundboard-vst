@@ -12,6 +12,8 @@ from typing import Any
 import numpy as np
 import pedalboard
 
+from .pitch import LowLatencyPitchShift
+
 
 @dataclass(frozen=True)
 class ParamSpec:
@@ -71,7 +73,15 @@ BUILTIN_EFFECTS: dict[str, tuple[str, list[ParamSpec]]] = {
         ParamSpec("mix", "Mix", 0, 1, 0.5),
     ]),
     "Distortion": ("Distorsione", [ParamSpec("drive_db", "Drive", 0, 50, 20, "dB")]),
+    "PitchShift": ("Pitch shifter", [
+        ParamSpec("semitones", "Semitoni", -12, 12, 0, "st"),
+        ParamSpec("mix", "Mix", 0, 1, 1.0),
+        ParamSpec("window_ms", "Finestra", 15, 100, 40, "ms"),
+    ]),
 }
+
+# Effetti scritti qui (non presi da pedalboard): il PitchShift di pedalboard ha ~1 s di latenza
+CUSTOM_EFFECTS = {"PitchShift": LowLatencyPitchShift}
 
 
 class InsertSlot:
@@ -86,6 +96,7 @@ class InsertSlot:
         self.plugin_name = plugin_name
         self.bypass = bypass
         self.failed = False           # disattivato dopo un errore in elaborazione
+        self._fifo: np.ndarray | None = None
 
     # Informazioni ------------------------------------------------------------
     @property
@@ -113,15 +124,20 @@ class InsertSlot:
             self.failed = True
             print(f"[insert] {self.display_name} disattivato: {exc}", file=sys.stderr)
             return block
-        if out.shape != block.shape:
-            fixed = np.zeros_like(block)
-            ch = min(out.shape[0], block.shape[0])
-            n = min(out.shape[1], block.shape[1])
-            fixed[:ch, :n] = out[:ch, :n]
-            if out.shape[0] == 1 and block.shape[0] == 2:
-                fixed[1, :n] = out[0, :n]
-            out = fixed
-        return out.astype(np.float32, copy=False)
+        out = np.asarray(out, dtype=np.float32)
+        if out.shape[0] != block.shape[0]:
+            out = np.repeat(out[:1], block.shape[0], axis=0) if out.shape[0] == 1 else out[:block.shape[0]]
+        n = block.shape[1]
+        if out.shape[1] != n or self._fifo is not None:
+            # plugin con latenza: restituisce meno campioni all'inizio; li riallineiamo con una coda
+            if self._fifo is None:
+                self._fifo = np.zeros((block.shape[0], 0), dtype=np.float32)
+            self._fifo = np.concatenate([self._fifo, out], axis=1)
+            if self._fifo.shape[1] >= n:
+                out, self._fifo = self._fifo[:, :n], self._fifo[:, n:]
+            else:
+                out = np.zeros_like(block)   # riempimento iniziale (latenza del plugin)
+        return out
 
     # Salvataggio ---------------------------------------------------------------
     def to_dict(self) -> dict[str, Any]:
@@ -191,7 +207,8 @@ def _set_state(plugin, data: bytes) -> bool:
 def create_builtin(type_name: str) -> InsertSlot:
     if type_name not in BUILTIN_EFFECTS:
         raise ValueError(f"Effetto sconosciuto: {type_name}")
-    plugin = getattr(pedalboard, type_name)()
+    factory = CUSTOM_EFFECTS.get(type_name) or getattr(pedalboard, type_name)
+    plugin = factory()
     for spec in BUILTIN_EFFECTS[type_name][1]:
         setattr(plugin, spec.attr, spec.default)
     return InsertSlot(plugin, "builtin", type_name=type_name)

@@ -118,6 +118,17 @@ class StripWidget(QFrame):
         self.mute.blockSignals(False)
         self.refresh_inserts()
 
+    def sync_levels(self) -> None:
+        if self.fader.value() != int(round(self.strip.gain_db * 10)):
+            self.fader.blockSignals(True)
+            self.fader.set_db(self.strip.gain_db)
+            self.fader.blockSignals(False)
+            self.db_label.setText(format_db(self.strip.gain_db))
+        if self.mute.isChecked() != self.strip.mute:
+            self.mute.blockSignals(True)
+            self.mute.setChecked(self.strip.mute)
+            self.mute.blockSignals(False)
+
     def refresh_inserts(self, select: InsertSlot | None = None) -> None:
         self.inserts.blockSignals(True)
         self.inserts.clear()
@@ -279,10 +290,14 @@ class MixerView(QWidget):
         self.hear_sounds.setChecked(self.engine.monitor_hear_sounds)
         self.hear_mic.setChecked(self.engine.monitor_hear_mic)
         self.hear_mic.setToolTip("Sentirti in cuffia (con i tuoi inserti). Attenzione al feedback con le casse.")
+        self.hear_player = QCheckBox("Player")
+        self.hear_player.setChecked(self.engine.monitor_hear_player)
+        self.hear_player.toggled.connect(lambda v: self._set_monitor("monitor_hear_player", v))
         self.hear_sounds.toggled.connect(lambda v: self._set_monitor("monitor_hear_sounds", v))
         self.hear_mic.toggled.connect(lambda v: self._set_monitor("monitor_hear_mic", v))
         w.extra.addWidget(label)
         w.extra.addWidget(self.hear_sounds)
+        w.extra.addWidget(self.hear_player)
         w.extra.addWidget(self.hear_mic)
 
     def _set_monitor(self, attr: str, value: bool) -> None:
@@ -294,6 +309,12 @@ class MixerView(QWidget):
             w.sync_from_model()
         self.hear_sounds.setChecked(self.engine.monitor_hear_sounds)
         self.hear_mic.setChecked(self.engine.monitor_hear_mic)
+        self.hear_player.setChecked(self.engine.monitor_hear_player)
+
+    def sync_levels(self) -> None:
+        """Aggiorna solo fader e mute (dopo un cambio da MIDI o dal Player)."""
+        for w in self.strips:
+            w.sync_levels()
 
     def update_meters(self) -> None:
         for w in self.strips:

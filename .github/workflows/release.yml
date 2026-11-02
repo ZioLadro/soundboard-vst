@@ -50,17 +50,23 @@ jobs:
           pip install -r app/requirements.txt pyinstaller
 
       - name: PyInstaller
-        run: >
-          pyinstaller --noconfirm --clean --windowed
-          --name SoundboardVST
-          --paths app/src
-          --collect-all pedalboard
-          --collect-submodules soundboard_vst
-          --collect-all rtmidi
-          --collect-all discord
-          --collect-all davey
-          --collect-all nacl
-          tools/packaging/launch.py
+        shell: pwsh
+        run: |
+          $deno = python -c "import deno; print(deno.find_deno_bin())"
+          pyinstaller --noconfirm --clean --windowed `
+            --name SoundboardVST `
+            --paths app/src `
+            --collect-all pedalboard `
+            --collect-submodules soundboard_vst `
+            --collect-all rtmidi `
+            --collect-all discord `
+            --collect-all davey `
+            --collect-all nacl `
+            --collect-all imageio_ffmpeg `
+            --collect-all yt_dlp `
+            --collect-all yt_dlp_ejs `
+            --add-binary "$deno;deno_bin" `
+            tools/packaging/launch.py
 
       - name: Self-test dell'eseguibile
         shell: pwsh

@@ -23,6 +23,7 @@ import numpy as np
 
 from . import devices
 from .mixer import ChannelStrip
+from .player import Player
 from .ringbuffer import RingBuffer
 
 
@@ -54,6 +55,9 @@ class AudioEngine:
 
         self.mic = ChannelStrip("mic", "Microfono")
         self.sounds = ChannelStrip("sounds", "Soundboard", gain_db=-6.0)
+        self.player_strip = ChannelStrip("player", "Player", gain_db=-12.0)
+        self.player = Player(sample_rate)
+        self.monitor_hear_player = True
         self.master = ChannelStrip("master", "Master → Discord")
         self.monitor = ChannelStrip("monitor", "Monitor (cuffie)", gain_db=-6.0)
         self.monitor_hear_sounds = True
@@ -81,7 +85,7 @@ class AudioEngine:
 
     @property
     def strips(self) -> list[ChannelStrip]:
-        return [self.mic, self.sounds, self.master, self.monitor]
+        return [self.mic, self.sounds, self.player_strip, self.master, self.monitor]
 
     def strip(self, strip_id: str) -> ChannelStrip:
         return next(s for s in self.strips if s.id == strip_id)
@@ -100,7 +104,9 @@ class AudioEngine:
 
     def has_active_sounds(self) -> bool:
         with self._voices_lock:
-            return any(not v.preview for v in self._voices)
+            if any(not v.preview for v in self._voices):
+                return True
+        return self.player.is_active
 
     def playing_keys(self) -> set[str]:
         with self._voices_lock:
@@ -139,13 +145,16 @@ class AudioEngine:
         mic = self.mic.process(mic_block, sr)
         voices, preview = self._mix_voices(frames)
         snd = self.sounds.process(voices, sr)
+        ply = self.player_strip.process(self.player.read(frames), sr)
         if self.bot_streaming:
-            self.bot_ring.write(snd)
-        master = self.master.process(mic + snd if self.sounds_to_master else mic, sr)
+            self.bot_ring.write(snd + ply)
+        master = self.master.process(mic + snd + ply if self.sounds_to_master else mic, sr)
 
         mon_in = np.zeros((2, frames), dtype=np.float32)
         if self.monitor_hear_sounds:
             mon_in += snd
+        if self.monitor_hear_player:
+            mon_in += ply
         if self.monitor_hear_mic:
             mon_in += mic
         mon_in += preview
@@ -263,6 +272,9 @@ class AudioEngine:
     def set_format(self, sample_rate: int, block_size: int) -> None:
         """Da chiamare ad audio fermo."""
         self.sample_rate = int(sample_rate)
+        if self.player.sample_rate != self.sample_rate:
+            self.player.stop()
+            self.player.sample_rate = self.sample_rate
         self.block_size = int(block_size)
         latency = self.block_size * 4
         self._mic_ring = RingBuffer(2, self.sample_rate, max_latency=latency)
@@ -280,6 +292,7 @@ class AudioEngine:
         d = {s.id: s.to_dict() for s in self.strips}
         d["monitor"]["hear_sounds"] = self.monitor_hear_sounds
         d["monitor"]["hear_mic"] = self.monitor_hear_mic
+        d["monitor"]["hear_player"] = self.monitor_hear_player
         return d
 
     def load_dict(self, d: dict) -> list[str]:
@@ -290,6 +303,7 @@ class AudioEngine:
         mon = d.get("monitor", {})
         self.monitor_hear_sounds = bool(mon.get("hear_sounds", True))
         self.monitor_hear_mic = bool(mon.get("hear_mic", False))
+        self.monitor_hear_player = bool(mon.get("hear_player", True))
         return errors
 
 
