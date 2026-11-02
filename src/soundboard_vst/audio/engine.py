@@ -59,6 +59,11 @@ class AudioEngine:
         self.monitor_hear_sounds = True
         self.monitor_hear_mic = False
 
+        # Uscita per il bot Discord: i suoni (dopo il canale Soundboard) vanno in questo buffer
+        self.bot_streaming = False        # True mentre il bot sta trasmettendo
+        self.sounds_to_master = True      # False = i suoni arrivano a Discord solo tramite il bot
+        self.bot_ring = RingBuffer(2, sample_rate, max_latency=int(sample_rate * 0.25))
+
         self._voices: list[Voice] = []
         self._voices_lock = threading.Lock()
 
@@ -92,6 +97,10 @@ class AudioEngine:
     def stop_sounds(self, key: str | None = None) -> None:
         with self._voices_lock:
             self._voices = [] if key is None else [v for v in self._voices if v.key != key]
+
+    def has_active_sounds(self) -> bool:
+        with self._voices_lock:
+            return any(not v.preview for v in self._voices)
 
     def playing_keys(self) -> set[str]:
         with self._voices_lock:
@@ -130,7 +139,9 @@ class AudioEngine:
         mic = self.mic.process(mic_block, sr)
         voices, preview = self._mix_voices(frames)
         snd = self.sounds.process(voices, sr)
-        master = self.master.process(mic + snd, sr)
+        if self.bot_streaming:
+            self.bot_ring.write(snd)
+        master = self.master.process(mic + snd if self.sounds_to_master else mic, sr)
 
         mon_in = np.zeros((2, frames), dtype=np.float32)
         if self.monitor_hear_sounds:
@@ -256,6 +267,7 @@ class AudioEngine:
         latency = self.block_size * 4
         self._mic_ring = RingBuffer(2, self.sample_rate, max_latency=latency)
         self._monitor_ring = RingBuffer(2, self.sample_rate, max_latency=latency)
+        self.bot_ring = RingBuffer(2, self.sample_rate, max_latency=int(self.sample_rate * 0.25))
         for strip in self.strips:
             for slot in strip.inserts:
                 try:

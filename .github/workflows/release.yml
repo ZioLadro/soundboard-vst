@@ -4,6 +4,9 @@ name: Build release
 # - Parte da sola quando pubblichi una release su GitHub.
 # - Si può lanciare a mano (Actions → Build release → Run workflow) per una release già esistente.
 on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**"]
   release:
     types: [published]
   workflow_dispatch:
@@ -20,7 +23,9 @@ jobs:
   windows:
     runs-on: windows-latest
     env:
-      TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+      # vuoto per i push su main: si compila e si verifica senza allegare a una release
+      TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag || '' }}
+      LABEL: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag || format('main-{0}', github.sha) }}
     steps:
       - name: Script di build (dal ramo del workflow)
         uses: actions/checkout@v4
@@ -30,7 +35,7 @@ jobs:
       - name: Codice della release
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ env.TAG || github.sha }}
           path: app
 
       - uses: actions/setup-python@v5
@@ -52,6 +57,9 @@ jobs:
           --collect-all pedalboard
           --collect-submodules soundboard_vst
           --collect-all rtmidi
+          --collect-all discord
+          --collect-all davey
+          --collect-all nacl
           tools/packaging/launch.py
 
       - name: Self-test dell'eseguibile
@@ -64,9 +72,18 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item app/README.md, app/CHANGELOG.md dist/SoundboardVST/
-          Compress-Archive -Path dist/SoundboardVST -DestinationPath "SoundboardVST-$env:TAG-windows-x64.zip"
+          Compress-Archive -Path dist/SoundboardVST -DestinationPath "SoundboardVST-$env:LABEL-windows-x64.zip"
+
+      - name: Artefatto della build
+        if: env.TAG == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundboardVST-windows-x64
+          path: SoundboardVST-${{ env.LABEL }}-windows-x64.zip
+          retention-days: 14
 
       - name: Allega alla release
+        if: env.TAG != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}

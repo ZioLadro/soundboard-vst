@@ -17,6 +17,17 @@ def selftest() -> int:
 
     out = pedalboard.Compressor()(np.zeros((2, 512), np.float32), 48000)
     assert out.shape == (2, 512)
+
+    from soundboard_vst import discord_bot
+
+    assert discord_bot.available(), f"discord.py non incluso: {discord_bot.unavailable_reason()}"
+    import davey  # noqa: F401  crittografia DAVE per la voce
+    import discord
+    import nacl  # noqa: F401
+
+    if sys.platform == "win32":
+        discord.opus._load_default()
+        assert discord.opus.is_loaded(), "libopus non inclusa"
     import sounddevice  # PortAudio deve essere incluso
 
     from soundboard_vst import midi

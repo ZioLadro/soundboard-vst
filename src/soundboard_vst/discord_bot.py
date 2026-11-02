@@ -1,0 +1,341 @@
+"""Bot Discord integrato: entra nel canale vocale dell'utente e trasmette i suoni della soundboard.
+
+Il bot gira con discord.py in un thread separato con il suo event loop asyncio.
+L'audio arriva dal motore (uscita del canale Soundboard del mixer) tramite un ring buffer:
+il bot trasmette solo mentre ci sono suoni, così su Discord risulta «parlante» solo quando serve.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import threading
+from dataclasses import dataclass
+from typing import Callable
+
+import numpy as np
+
+from .audio.ringbuffer import RingBuffer
+
+DISCORD_SR = 48000
+FRAME = 960                          # 20 ms a 48 kHz
+FRAME_BYTES = FRAME * 2 * 2          # stereo, int16
+IDLE_FRAMES = 25                     # 0,5 s di silenzio prima di smettere di trasmettere
+PREBUFFER = FRAME * 2                # attende 40 ms di audio prima di partire
+INVITE_PERMISSIONS = (1 << 20) | (1 << 21)   # Connect + Speak
+
+_discord = None
+_error: str | None = None
+
+
+def _lib():
+    global _discord, _error
+    if _discord is None and _error is None:
+        try:
+            import discord
+
+            _discord = discord
+        except Exception as exc:
+            _error = str(exc) or exc.__class__.__name__
+    return _discord
+
+
+def available() -> bool:
+    return _lib() is not None
+
+
+def unavailable_reason() -> str:
+    _lib()
+    return _error or ""
+
+
+def application_id_from_token(token: str) -> int | None:
+    """La prima parte del token di un bot è l'ID del bot (che coincide con l'ID dell'applicazione)."""
+    try:
+        part = token.strip().split(".")[0]
+        part += "=" * (-len(part) % 4)
+        return int(base64.urlsafe_b64decode(part).decode())
+    except Exception:
+        return None
+
+
+def invite_url(application_id: int) -> str:
+    return ("https://discord.com/oauth2/authorize"
+            f"?client_id={application_id}&scope=bot&permissions={INVITE_PERMISSIONS}")
+
+
+def find_user_channel(guilds, user_id: int):
+    """Canale vocale (o stage) in cui si trova l'utente, cercando in tutti i server del bot."""
+    for guild in guilds:
+        channels = list(getattr(guild, "voice_channels", [])) + list(getattr(guild, "stage_channels", []))
+        for ch in channels:
+            if user_id in getattr(ch, "voice_states", {}):
+                return ch
+    return None
+
+
+def to_pcm(block: np.ndarray) -> bytes:
+    """(2, n) float32 → PCM s16le stereo interleaved."""
+    pcm = np.clip(block.T, -1.0, 1.0) * 32767.0
+    return pcm.astype("<i2").tobytes()
+
+
+class SoundboardSource:
+    """Sorgente audio per discord.py (stessa interfaccia di ``discord.AudioSource``).
+
+    Legge 20 ms alla volta dal ring buffer del motore. Restituisce ``b""`` (fine della
+    trasmissione) dopo mezzo secondo di silenzio senza suoni attivi.
+    """
+
+    def __init__(self, ring: RingBuffer, sample_rate: int, has_sounds: Callable[[], bool]):
+        self.ring = ring
+        self.sample_rate = sample_rate
+        self.has_sounds = has_sounds
+        self._idle = 0
+        self._started = False
+        self.finished = False
+
+    def is_opus(self) -> bool:
+        return False
+
+    def cleanup(self) -> None:
+        self.finished = True
+
+    def _read_block(self) -> np.ndarray:
+        if self.sample_rate == DISCORD_SR:
+            return self.ring.read(FRAME)
+        n = max(1, round(FRAME * self.sample_rate / DISCORD_SR))
+        src = self.ring.read(n)
+        x_old = np.linspace(0.0, 1.0, n, endpoint=False)
+        x_new = np.linspace(0.0, 1.0, FRAME, endpoint=False)
+        return np.stack([np.interp(x_new, x_old, src[c]) for c in range(2)]).astype(np.float32)
+
+    def read(self) -> bytes:
+        if not self._started:
+            if len(self.ring) < PREBUFFER and self.has_sounds():
+                return b"\x00" * FRAME_BYTES
+            self._started = True
+        block = self._read_block()
+        if np.abs(block).max(initial=0.0) < 1e-4 and not self.has_sounds():
+            self._idle += 1
+            if self._idle >= IDLE_FRAMES:
+                self.finished = True
+                return b""
+        else:
+            self._idle = 0
+        return to_pcm(block)
+
+
+@dataclass
+class BotStatus:
+    online: bool = False
+    channel: str = ""          # "Server › canale" se in voce
+    message: str = "Bot spento"
+
+
+class DiscordBot:
+    """Gestisce il client discord.py in un thread; i metodi pubblici si chiamano dal thread della GUI.
+
+    ``on_status(BotStatus)`` viene chiamato dal thread del bot: la GUI deve rimbalzarlo
+    sul proprio thread (es. con un segnale Qt).
+    """
+
+    def __init__(self, engine, on_status: Callable[[BotStatus], None]):
+        self.engine = engine
+        self.on_status = on_status
+        self.owner_id: int = 0
+        self.follow = True
+        self.application_id: int | None = None
+        self._client = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+        self._source: SoundboardSource | None = None
+        self.status = BotStatus()
+
+    # Stato ------------------------------------------------------------------------
+    def _set_status(self, **kw) -> None:
+        for k, v in kw.items():
+            setattr(self.status, k, v)
+        self.on_status(BotStatus(**self.status.__dict__))
+
+    @property
+    def running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    # Avvio / arresto ------------------------------------------------------------------
+    def start(self, token: str, owner_id: int, follow: bool = True) -> None:
+        discord = _lib()
+        if discord is None:
+            self._set_status(online=False, channel="", message=f"discord.py non disponibile: {_error}")
+            return
+        if self.running:
+            self.stop()
+        self.owner_id, self.follow = owner_id, follow
+        self.application_id = application_id_from_token(token)
+        self._set_status(online=False, channel="", message="Connessione a Discord…")
+
+        intents = discord.Intents.none()
+        intents.guilds = True
+        intents.voice_states = True
+        client = discord.Client(intents=intents)
+        bot = self
+
+        @client.event
+        async def on_ready():
+            bot.application_id = client.application_id or bot.application_id
+            bot._set_status(online=True, message=f"Online come {client.user}")
+            if bot.follow:
+                await bot._join_owner()
+
+        @client.event
+        async def on_voice_state_update(member, before, after):
+            if member.id == client.user.id:
+                if after.channel is None:
+                    bot._stop_streaming()
+                    bot._set_status(channel="", message=f"Online come {client.user}")
+                else:
+                    bot._set_status(channel=f"{after.channel.guild.name} › {after.channel.name}",
+                                    message=f"Nel canale {after.channel.name}")
+                return
+            if member.id != bot.owner_id or not bot.follow:
+                return
+            if after.channel is not None and after.channel != before.channel:
+                await bot._connect(after.channel)
+            elif after.channel is None and before.channel is not None:
+                vc = before.channel.guild.voice_client
+                if vc is not None:
+                    await vc.disconnect(force=False)
+
+        self._client = client
+        self._loop = asyncio.new_event_loop()
+
+        async def runner():
+            async with client:          # chiude sempre la sessione, anche dopo un errore
+                await client.start(token)
+
+        def run():
+            asyncio.set_event_loop(self._loop)
+            try:
+                self._loop.run_until_complete(runner())
+            except discord.LoginFailure:
+                self._set_status(online=False, channel="", message="Token non valido")
+            except discord.PrivilegedIntentsRequired:
+                self._set_status(online=False, channel="", message="Intent mancanti nel portale sviluppatori")
+            except Exception as exc:
+                self._set_status(online=False, channel="", message=f"Errore del bot: {exc}")
+            else:
+                self._set_status(online=False, channel="", message="Bot spento")
+            finally:
+                self.engine.bot_streaming = False
+                try:
+                    self._loop.run_until_complete(self._loop.shutdown_asyncgens())
+                finally:
+                    self._loop.close()
+
+        self._thread = threading.Thread(target=run, name="discord-bot", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        if self._client is not None and self._loop is not None and self.running:
+            fut = asyncio.run_coroutine_threadsafe(self._client.close(), self._loop)
+            try:
+                fut.result(timeout=5)
+            except Exception:
+                pass
+            self._thread.join(timeout=5)
+        self.engine.bot_streaming = False
+        self._client = None
+        self._thread = None
+
+    def _submit(self, coro) -> None:
+        if self._loop is not None and self.running:
+            asyncio.run_coroutine_threadsafe(coro, self._loop)
+        else:
+            coro.close()
+
+    # Canali vocali -----------------------------------------------------------------
+    def join_owner(self) -> None:
+        self._submit(self._join_owner())
+
+    def leave(self) -> None:
+        self._submit(self._leave())
+
+    async def _join_owner(self) -> None:
+        if not self._client or not self.owner_id:
+            self._set_status(message="Imposta il tuo ID utente Discord nelle impostazioni")
+            return
+        ch = find_user_channel(self._client.guilds, self.owner_id)
+        if ch is None:
+            self._set_status(message="Non sei in un canale vocale di un server in cui c'è il bot")
+            return
+        await self._connect(ch)
+
+    async def _connect(self, channel) -> None:
+        try:
+            vc = channel.guild.voice_client
+            if vc is not None and vc.is_connected():
+                if vc.channel != channel:
+                    await vc.move_to(channel)
+            else:
+                await channel.connect(self_deaf=True, timeout=20)
+        except Exception as exc:
+            self._set_status(message=f"Impossibile entrare in {channel.name}: {exc}")
+
+    async def _leave(self) -> None:
+        for vc in list(self._client.voice_clients if self._client else []):
+            await vc.disconnect(force=False)
+
+    # Trasmissione ------------------------------------------------------------------------
+    def notify_sound(self) -> None:
+        """Chiamato quando parte un suono: avvia la trasmissione se il bot è in un canale."""
+        if not self.running or not self.status.channel:
+            return
+        if self._source is not None and not self._source.finished and self.engine.bot_streaming:
+            return
+        self.engine.bot_ring.clear()
+        self.engine.bot_streaming = True
+        self._submit(self._start_playing())
+
+    async def _start_playing(self) -> None:
+        vc = next((v for v in (self._client.voice_clients if self._client else []) if v.is_connected()), None)
+        if vc is None:
+            self.engine.bot_streaming = False
+            return
+        if vc.is_playing():
+            return
+        source = SoundboardSource(self.engine.bot_ring, self.engine.sample_rate, self.engine.has_active_sounds)
+        self._source = source
+
+        def after(err):
+            if self._source is source:
+                self.engine.bot_streaming = False
+            if err:
+                self._set_status(message=f"Errore audio del bot: {err}")
+
+        try:
+            vc.play(_wrap(source), after=after)
+        except Exception as exc:
+            self.engine.bot_streaming = False
+            self._set_status(message=f"Errore audio del bot: {exc}")
+
+    def _stop_streaming(self) -> None:
+        self.engine.bot_streaming = False
+        if self._source is not None:
+            self._source.finished = True
+
+
+def _wrap(source: SoundboardSource):
+    """Adatta la sorgente alla classe base di discord.py (richiesta da ``VoiceClient.play``)."""
+    discord = _lib()
+
+    class _Source(discord.AudioSource):
+        def read(self) -> bytes:
+            return source.read()
+
+        def is_opus(self) -> bool:
+            return False
+
+        def cleanup(self) -> None:
+            source.cleanup()
+
+    return _Source()

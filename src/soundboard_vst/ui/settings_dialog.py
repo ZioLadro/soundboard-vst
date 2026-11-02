@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QRegularExpression, Qt, QUrl
+from PySide6.QtGui import QDesktopServices, QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
-    QLabel, QListWidget, QPushButton, QVBoxLayout,
+    QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QTabWidget, QVBoxLayout, QWidget,
 )
 
-from .. import midi
+from .. import discord_bot, midi
 from ..audio import devices
 from ..config import Config, default_vst3_dirs
 from . import theme
@@ -103,6 +103,59 @@ class SettingsDialog(QDialog):
             self.midi_port.setEnabled(False)
             midi_refresh.setEnabled(False)
 
+        # Bot Discord -------------------------------------------------------------------
+        dc = config.data["discord"]
+        bot_box = QGroupBox("Bot Discord")
+        bform = QFormLayout(bot_box)
+        self.bot_token = QLineEdit(dc.get("token", ""))
+        self.bot_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.bot_token.setPlaceholderText("Token del bot dal portale sviluppatori")
+        show = QPushButton("Mostra")
+        show.setCheckable(True)
+        show.toggled.connect(lambda on: self.bot_token.setEchoMode(
+            QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password))
+        trow = QHBoxLayout()
+        trow.addWidget(self.bot_token, 1)
+        trow.addWidget(show)
+        bform.addRow("Token", trow)
+        self.bot_owner = QLineEdit(str(dc.get("owner_id", "")))
+        self.bot_owner.setPlaceholderText("es. 123456789012345678")
+        self.bot_owner.setValidator(QRegularExpressionValidator(QRegularExpression(r"\d{0,20}")))
+        bform.addRow("Il tuo ID utente", self.bot_owner)
+        self.bot_autostart = QCheckBox("Avvia il bot all'apertura della soundboard")
+        self.bot_autostart.setChecked(bool(dc.get("autostart", False)))
+        self.bot_follow = QCheckBox("Segui me: entra, cambia ed esci dai canali vocali insieme a me")
+        self.bot_follow.setChecked(bool(dc.get("follow", True)))
+        self.bot_exclusive = QCheckBox("Con il bot in canale, i suoni non passano dal microfono virtuale")
+        self.bot_exclusive.setToolTip("Evita che il canale senta i suoni due volte (dal bot e dal tuo microfono)")
+        self.bot_exclusive.setChecked(bool(dc.get("exclusive", True)))
+        for cb in (self.bot_autostart, self.bot_follow, self.bot_exclusive):
+            bform.addRow(cb)
+        portal = QPushButton("Crea il bot…")
+        portal.setToolTip("Apre il portale sviluppatori di Discord")
+        portal.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://discord.com/developers/applications")))
+        invite = QPushButton("Invita il bot nel server…")
+        invite.clicked.connect(self._invite_bot)
+        brow = QHBoxLayout()
+        brow.addWidget(portal)
+        brow.addWidget(invite)
+        brow.addStretch(1)
+        bform.addRow(brow)
+        bot_hint = QLabel(
+            "1. Crea un'applicazione nel portale, sezione <b>Bot</b> → <b>Reset Token</b> e incollalo qui. "
+            "2. Invita il bot nel tuo server. 3. In Discord attiva <i>Impostazioni → Avanzate → Modalità "
+            "sviluppatore</i>, poi tasto destro sul tuo nome → <b>Copia ID utente</b>. "
+            "Il token è salvato in chiaro nelle impostazioni del programma: non condividerlo.")
+        bot_hint.setWordWrap(True)
+        bot_hint.setTextFormat(Qt.TextFormat.RichText)
+        bot_hint.setStyleSheet(f"color: {theme.MUTED};")
+        bform.addRow(bot_hint)
+        if not discord_bot.available():
+            warn = QLabel(f"Bot non disponibile (manca discord.py): {discord_bot.unavailable_reason()}")
+            warn.setWordWrap(True)
+            warn.setStyleSheet(f"color: {theme.DANGER};")
+            bform.addRow(warn)
+
         # VST3 ---------------------------------------------------------------------
         vst_box = QGroupBox("Cartelle plugin VST3")
         self.vst_dirs = QListWidget()
@@ -127,10 +180,17 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
 
+        self.tabs = QTabWidget()
+        for box, title in ((audio_box, "Audio"), (midi_box, "MIDI"), (bot_box, "Bot Discord"),
+                           (vst_box, "Plugin VST3")):
+            page = QWidget()
+            pl = QVBoxLayout(page)
+            box.setTitle("")
+            pl.addWidget(box)
+            pl.addStretch(1)
+            self.tabs.addTab(page, title)
         lay = QVBoxLayout(self)
-        lay.addWidget(audio_box)
-        lay.addWidget(midi_box)
-        lay.addWidget(vst_box)
+        lay.addWidget(self.tabs, 1)
         lay.addWidget(buttons)
 
         self._fill_host_apis()
@@ -201,6 +261,13 @@ class SettingsDialog(QDialog):
         self.vst_dirs.clear()
         self.vst_dirs.addItems(default_vst3_dirs())
 
+    def _invite_bot(self) -> None:
+        app_id = discord_bot.application_id_from_token(self.bot_token.text())
+        if app_id is None:
+            QMessageBox.information(self, "Invita il bot", "Incolla prima il token del bot.")
+            return
+        QDesktopServices.openUrl(QUrl(discord_bot.invite_url(app_id)))
+
     def _save(self) -> None:
         a = self.config.data["audio"]
         a["host_api"] = self.host_api.currentText()
@@ -209,6 +276,13 @@ class SettingsDialog(QDialog):
         a["monitor_output"] = self.monitor.currentData() or ""
         a["sample_rate"] = int(self.sample_rate.currentData())
         a["block_size"] = int(self.block.currentData())
+        self.config.data["discord"] = {
+            "token": self.bot_token.text().strip(),
+            "owner_id": self.bot_owner.text().strip(),
+            "autostart": self.bot_autostart.isChecked(),
+            "follow": self.bot_follow.isChecked(),
+            "exclusive": self.bot_exclusive.isChecked(),
+        }
         self.config.data["midi"] = {"input": self.midi_port.currentData() or "",
                                     "velocity": self.midi_velocity.isChecked()}
         dirs = [self.vst_dirs.item(i).text() for i in range(self.vst_dirs.count())]

@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.3.0 — 2026-11-02
+
+### Novità
+- Bot Discord integrato: entra nel canale vocale in cui sei, ti segue quando cambi canale ed esce con te,
+  e riproduce i suoni premuti (canale Soundboard del mixer, con inserti e fader). Supporta la crittografia
+  della voce DAVE (discord.py 2.7).
+- Pulsante 🤖 nella barra in alto con stato del bot, entra/esci dal canale, avvio/arresto e invito nel server.
+- Opzione per non mandare i suoni anche dal microfono virtuale quando il bot è in canale.
+- Impostazioni divise in schede: Audio, MIDI, Bot Discord, Plugin VST3.
+- Build: compilazione e verifica dell'eseguibile Windows a ogni push su `main`.
+
 ## v0.2.0 — 2026-11-02
 
 ### Novità

@@ -5,17 +5,19 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, Qt, QTimer
+from PySide6.QtCore import QByteArray, QObject, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QApplication, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QTabWidget,
+    QApplication, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton, QTabWidget, QToolButton,
     QVBoxLayout, QWidget,
 )
 
-from . import APP_NAME, __version__, midi
+from . import APP_NAME, __version__, discord_bot, midi
 from .audio import devices
 from .audio.engine import AudioEngine
 from .audio.library import SoundCache, decode
 from .audio.plugins import scan_vst3
+from .discord_bot import DiscordBot
 from .config import Config, config_dir
 from .ui import theme
 from .ui.mixer_view import MixerView
@@ -23,6 +25,11 @@ from .ui.myinstants_dialog import MyInstantsDialog
 from .ui.settings_dialog import SettingsDialog
 from .ui.sound_dialog import MidiBridge
 from .ui.soundboard_view import SoundboardView
+
+
+class BotSignals(QObject):
+    """Riporta gli stati del bot (thread di discord.py) nel thread dell'interfaccia."""
+    status = Signal(object)
 
 
 class MainWindow(QMainWindow):
@@ -54,6 +61,14 @@ class MainWindow(QMainWindow):
         header.addWidget(title)
         header.addSpacing(16)
         header.addWidget(self.route_label, 1)
+        self.bot_btn = QToolButton()
+        self.bot_btn.setText("🤖  Bot spento")
+        self.bot_btn.setToolTip("Bot Discord")
+        self.bot_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._bot_menu = QMenu(self)
+        self._bot_menu.aboutToShow.connect(self._build_bot_menu)
+        self.bot_btn.setMenu(self._bot_menu)
+        header.addWidget(self.bot_btn)
         header.addWidget(settings_btn)
         header.addWidget(self.audio_btn)
 
@@ -102,6 +117,9 @@ class MainWindow(QMainWindow):
         if errors:
             QTimer.singleShot(300, lambda: QMessageBox.warning(
                 self, "Plugin non caricati", "Alcuni inserti non sono stati ripristinati:\n\n" + "\n".join(errors)))
+        self.bot_signals = BotSignals()
+        self.bot_signals.status.connect(self._on_bot_status)
+        self.bot = DiscordBot(self.engine, self.bot_signals.status.emit)
         self.midi_bridge = MidiBridge()
         self.midi_bridge.event.connect(self._on_midi)
         self.midi_in = midi.MidiInput()
@@ -109,6 +127,8 @@ class MainWindow(QMainWindow):
         if autostart:
             QTimer.singleShot(0, self.first_start)
             QTimer.singleShot(0, self.open_midi)
+            if config.data["discord"].get("autostart") and config.data["discord"].get("token"):
+                QTimer.singleShot(0, self.start_bot)
 
     # Audio --------------------------------------------------------------------------
     def first_start(self) -> None:
@@ -192,6 +212,62 @@ class MainWindow(QMainWindow):
             return
         vol = float(self.config.data["sounds"].get(key, {}).get("volume", 1.0))
         self.engine.play(key, data, vol * scale, overlap=self.board.overlap.isChecked())
+        self.bot.notify_sound()
+
+    # Bot Discord ------------------------------------------------------------------------
+    def start_bot(self) -> None:
+        dc = self.config.data["discord"]
+        if not dc.get("token"):
+            QMessageBox.information(self, "Bot Discord",
+                                    "Inserisci il token del bot in Impostazioni → Bot Discord.")
+            self.open_settings(tab=2)
+            return
+        try:
+            owner = int(dc.get("owner_id") or 0)
+        except ValueError:
+            owner = 0
+        self.bot.start(dc["token"], owner, dc.get("follow", True))
+
+    def _build_bot_menu(self) -> None:
+        m = self._bot_menu
+        m.clear()
+        st = self.bot.status
+        if not discord_bot.available():
+            a = m.addAction(f"discord.py non disponibile: {discord_bot.unavailable_reason()}")
+            a.setEnabled(False)
+        elif self.bot.running:
+            m.addAction("Entra nel mio canale", self.bot.join_owner)
+            leave = m.addAction("Esci dal canale", self.bot.leave)
+            leave.setEnabled(bool(st.channel))
+            m.addSeparator()
+            m.addAction("Ferma il bot", self.bot.stop)
+        else:
+            m.addAction("Avvia il bot", self.start_bot)
+        m.addSeparator()
+        app_id = self.bot.application_id or discord_bot.application_id_from_token(
+            self.config.data["discord"].get("token", ""))
+        inv = m.addAction("Invita il bot nel server…",
+                          lambda: QDesktopServices.openUrl(QUrl(discord_bot.invite_url(app_id))))
+        inv.setEnabled(app_id is not None)
+        m.addAction("Impostazioni del bot…", lambda: self.open_settings(tab=2))
+
+    def _on_bot_status(self, st) -> None:
+        if st.channel:
+            text = f"🤖  {st.channel}"
+        elif st.online:
+            text = "🤖  Bot online"
+        elif self.bot.running:
+            text = "🤖  Connessione…"
+        else:
+            text = "🤖  Bot spento"
+        self.bot_btn.setText(text)
+        self.bot_btn.setToolTip(st.message)
+        self.statusBar().showMessage(f"Bot: {st.message}", 6000)
+        self._update_exclusive()
+
+    def _update_exclusive(self) -> None:
+        exclusive = bool(self.config.data["discord"].get("exclusive", True))
+        self.engine.sounds_to_master = not (exclusive and self.bot.status.channel)
 
     # MIDI ----------------------------------------------------------------------------
     def open_midi(self) -> None:
@@ -266,9 +342,17 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Trovati {n} plugin VST3.", 5000)
 
     # Impostazioni / salvataggio -----------------------------------------------------
-    def open_settings(self) -> None:
+    def open_settings(self, tab: int = 0) -> None:
+        old_bot = dict(self.config.data["discord"])
         dlg = SettingsDialog(self.config, self)
+        dlg.tabs.setCurrentIndex(tab)
         if dlg.exec():
+            dc = self.config.data["discord"]
+            if self.bot.running and (dc["token"] != old_bot.get("token") or dc["owner_id"] != old_bot.get("owner_id")):
+                self.start_bot()
+            else:
+                self.bot.follow = dc.get("follow", True)
+                self._update_exclusive()
             self.config.save()
             self._vst_cache = None
             self.start_audio()
@@ -308,6 +392,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self.save()
+        self.bot.stop()
         self.engine.stop()
         self.midi_in.close()
         super().closeEvent(event)

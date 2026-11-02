@@ -69,6 +69,13 @@ DEFAULTS: dict[str, Any] = {
     "vst3_dirs": [],             # vuoto = cartelle standard
     "overlap_sounds": True,
     "midi": {"input": "", "velocity": False},
+    "discord": {
+        "token": "",             # token del bot (salvato in chiaro: non condividere il file)
+        "owner_id": "",          # il tuo ID utente Discord: il bot ti segue nei canali vocali
+        "autostart": False,
+        "follow": True,
+        "exclusive": True,       # con il bot in canale i suoni non passano dal cavo virtuale
+    },
     "sounds": {},                # nome file -> {"volume": float, "shortcut": str}
     "mixer": {},                 # id canale -> stato (fader, mute, inserti...)
     "window": {},

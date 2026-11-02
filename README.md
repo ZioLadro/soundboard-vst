@@ -17,6 +17,7 @@ la tua voce **più** i suoni, già mixati ed elaborati.
 - **Controller MIDI**: scegli il controller in Impostazioni → MIDI, poi su un suono premi **Impara** e suona una nota o un pad (note e controlli CC, con il canale). Opzionalmente la forza con cui premi (velocity) regola il volume.
   - «Sovrapponi» per far suonare lo stesso suono più volte insieme, «Stop tutto» per zittire tutto.
 - **Ricerca su [MyInstants](https://www.myinstants.com)** direttamente dall'app: cerca o sfoglia le tendenze, ascolta l'anteprima solo in cuffia (non arriva a Discord), e aggiungi il suono con un clic: viene scaricato nella cartella e messo su un pad.
+- **Bot Discord integrato**: il bot entra nel canale vocale in cui ti trovi (e ti segue se cambi canale) e riproduce i suoni che premi, con gli effetti e il fader del canale Soundboard. Per i suoni non serve VB-Cable.
 - **Ingresso**: scegli microfono o scheda audio.
 - **Uscita verso Discord**: il mix va su un cavo audio virtuale, che gli altri programmi vedono come microfono.
 - **Monitor**: uscita separata per le cuffie, per sentire i suoni (e, se vuoi, te stesso).
@@ -92,6 +93,27 @@ Succede quando l'audio di Discord rientra nel cavo virtuale e torna nel microfon
 
 La soundboard riconosce i casi 2, 3 e 4 e mostra un avviso quando avvii l'audio.
 
+## Bot Discord
+
+Il bot fa sentire i suoni nel canale vocale come un utente a parte: tu continui a parlare dal tuo
+Discord normale, e per i suoni non serve il cavo virtuale.
+
+1. **Crea il bot**: apri il [portale sviluppatori](https://discord.com/developers/applications) →
+   *New Application* → sezione **Bot** → **Reset Token** e copia il token (non serve attivare nessun intent privilegiato).
+2. **Impostazioni → Bot Discord**: incolla il token e premi **Invita il bot nel server…**, scegli il server e conferma
+   (il bot chiede solo i permessi *Connetti* e *Parla*).
+3. **Il tuo ID utente**: in Discord attiva *Impostazioni → Avanzate → Modalità sviluppatore*, poi tasto destro sul tuo
+   nome → **Copia ID utente** e incollalo nelle impostazioni.
+4. Dal pulsante 🤖 in alto avvia il bot. Con «Segui me» attivo entra nel tuo canale, ti segue quando cambi
+   canale ed esce quando esci; altrimenti usa **Entra nel mio canale**.
+
+Note:
+- Il bot trasmette il canale **Soundboard** del mixer (inserti e fader compresi), non il microfono; l'anteprima di MyInstants resta solo in cuffia.
+- Con «Con il bot in canale, i suoni non passano dal microfono virtuale» (attivo di default) il canale non sente i suoni due volte.
+- Il bot trasmette solo mentre suona qualcosa, quindi su Discord risulta «parlante» solo in quei momenti.
+- Usa discord.py 2.7 con il supporto alla crittografia end-to-end della voce (DAVE), obbligatoria su Discord.
+- Il token è salvato in chiaro in `%APPDATA%\SoundboardVST\config.json`: chi lo ha può controllare il bot, quindi non condividere quel file. Se il token esce per sbaglio, rigeneralo dal portale.
+
 ## MIDI
 
 1. Collega il controller e aprilo in **Impostazioni → MIDI → Controller**.
@@ -137,6 +159,7 @@ src/soundboard_vst/
   pads.py                pagine e slot dei pad
   myinstants.py          ricerca e download da myinstants.com
   midi.py                ingresso MIDI (python-rtmidi)
+  discord_bot.py         bot Discord (discord.py) che trasmette il canale Soundboard
   audio/engine.py        motore audio: stream, mix, routing
   audio/mixer.py         canale del mixer (inserti, fader, mute, meter)
   audio/plugins.py       inserti: effetti integrati e VST3
@@ -151,7 +174,8 @@ Test: `pip install pytest` e poi `pytest`.
 
 ## Release
 
-Pubblicando una release su GitHub (tag `vX.Y.Z`) la GitHub Action `Build release` compila
+A ogni push su `main` la stessa Action compila e verifica l'eseguibile e lo salva come artefatto
+(scaricabile dalla pagina del run per 14 giorni). Pubblicando una release su GitHub (tag `vX.Y.Z`) la GitHub Action `Build release` compila
 l'eseguibile Windows con PyInstaller, lo verifica e allega lo zip alla release. Per una release già
 esistente: *Actions → Build release → Run workflow* e indica il tag.
 
@@ -159,4 +183,4 @@ esistente: *Actions → Build release → Run workflow* e indica il tag.
 
 [PySide6](https://doc.qt.io/qtforpython-6/) (interfaccia), [sounddevice](https://python-sounddevice.readthedocs.io/) (audio),
 [pedalboard](https://github.com/spotify/pedalboard) (VST3, effetti, decodifica audio), [NumPy](https://numpy.org/),
-[python-rtmidi](https://github.com/SpotlightKid/python-rtmidi) (MIDI).
+[python-rtmidi](https://github.com/SpotlightKid/python-rtmidi) (MIDI), [discord.py](https://github.com/Rapptz/discord.py) (bot Discord).
