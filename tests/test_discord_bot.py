@@ -113,3 +113,17 @@ def test_does_not_steal_bot_used_by_another_soundboard():
     guild.me.voice = None                           # bot libero: entra normalmente
     asyncio.run(bot._connect(target))
     assert len(connects) == 1 and connects[0]["self_deaf"] is True
+
+
+def test_restarting_audio_keeps_bot_ring_object():
+    eng = AudioEngine(48000, 512)
+    ring = eng.bot_ring
+    src = SoundboardSource(ring, 48000, lambda: True)
+    eng.set_format(48000, 512)          # come dopo «OK» nelle impostazioni
+    eng.set_format(48000, 1024)
+    assert eng.bot_ring is ring
+    eng.bot_streaming = True
+    eng.play("x", np.full((2, 4096), 0.3, np.float32))
+    for _ in range(4):
+        eng.render(1024)
+    assert np.frombuffer(src.read(), "<i2").any()

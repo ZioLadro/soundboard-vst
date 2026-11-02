@@ -175,7 +175,9 @@ Nella tab **Player**:
 - Trascina i brani per riordinarli, `Canc` per toglierli; ripeti (no / coda / brano) e casuale.
 - Il volume del Player è il canale *Player* del mixer, con i suoi inserti; nel monitor puoi scegliere se sentirlo.
 
-Di YouTube si riproduce solo l'audio. La lettura dei link usa [yt-dlp](https://github.com/yt-dlp/yt-dlp) con Deno e ffmpeg
+Di YouTube si riproduce solo l'audio: prima di suonare, il brano viene scaricato da yt-dlp in una cache
+(`%APPDATA%\SoundboardVST\cache\youtube`, massimo 1,5 GB, poi si cancellano i file usati meno di recente), così una
+canzone già ascoltata riparte subito e il brano successivo della coda viene scaricato in anticipo. La lettura dei link usa [yt-dlp](https://github.com/yt-dlp/yt-dlp) con Deno e ffmpeg
 inclusi nell'eseguibile. YouTube cambia spesso: se smette di funzionare, aggiorna alla release più recente (ogni build
 prende l'ultima versione di yt-dlp). Scaricare o trasmettere contenuti di YouTube con strumenti esterni è contrario ai
 suoi termini di servizio, e la musica è spesso protetta da diritti: usalo per uso personale e con cognizione.

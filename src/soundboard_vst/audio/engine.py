@@ -275,11 +275,15 @@ class AudioEngine:
         if self.player.sample_rate != self.sample_rate:
             self.player.stop()
             self.player.sample_rate = self.sample_rate
+        changed = int(block_size) != self.block_size or self._mic_ring.capacity != self.sample_rate
         self.block_size = int(block_size)
         latency = self.block_size * 4
-        self._mic_ring = RingBuffer(2, self.sample_rate, max_latency=latency)
-        self._monitor_ring = RingBuffer(2, self.sample_rate, max_latency=latency)
-        self.bot_ring = RingBuffer(2, self.sample_rate, max_latency=int(self.sample_rate * 0.12))
+        # stessi oggetti: il bot Discord tiene un riferimento al proprio buffer
+        self._mic_ring.reconfigure(self.sample_rate, latency)
+        self._monitor_ring.reconfigure(self.sample_rate, latency)
+        self.bot_ring.reconfigure(self.sample_rate, int(self.sample_rate * 0.12))
+        if not changed:
+            return
         for strip in self.strips:
             for slot in strip.inserts:
                 try:

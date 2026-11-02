@@ -28,6 +28,16 @@ class RingBuffer:
     def __len__(self) -> int:
         return self._count
 
+    def reconfigure(self, capacity: int, max_latency: int | None = None) -> None:
+        """Cambia dimensioni restando lo stesso oggetto (chi lo usa continua a vederlo)."""
+        with self._lock:
+            if capacity != self.capacity:
+                self._buf = np.zeros((self.channels, capacity), dtype=np.float32)
+                self.capacity = capacity
+            self.max_latency = max_latency or capacity
+            self._read = 0
+            self._count = 0
+
     def clear(self) -> None:
         with self._lock:
             self._read = 0

@@ -46,7 +46,7 @@ class PlayerView(QWidget):
         self._bridge.failed.connect(lambda msg: self._set_status(msg, error=True))
         self._bridge.duration.connect(self._on_duration)
         player.on_change = self._bridge.player_event.emit
-        player.resolvers["youtube"] = youtube.stream
+        player.resolvers["youtube"] = youtube.resolver
         self._request = 0
         self._seeking = False
         self.setAcceptDrops(True)
@@ -248,7 +248,8 @@ class PlayerView(QWidget):
             return
         self.title.setText(t.title)
         where = "YouTube" if t.kind == "youtube" else Path(t.source).parent.name or "File"
-        state = {"loading": "Caricamento…", "paused": "In pausa", "stopped": "Fermo"}.get(st, "In riproduzione")
+        state = {"loading": "Scarico da YouTube…" if t.kind == "youtube" else "Caricamento…",
+                 "paused": "In pausa", "stopped": "Fermo"}.get(st, "In riproduzione")
         self.subtitle.setText(f"{state} · {where}")
         self.total.setText(format_time(t.duration))
 
@@ -277,17 +278,34 @@ class PlayerView(QWidget):
         self.status.setStyleSheet(f"color: {theme.DANGER if error else theme.MUTED};")
 
     def _on_player_event(self, event: str) -> None:
+        if event == "progress":
+            p = self.player.load_progress
+            if p is not None and self.player.state == "loading":
+                self.subtitle.setText(f"Scarico da YouTube… {p * 100:.0f}%")
+            return
         if event == "error":
             self._set_status(self.player.error, error=True)
         elif event in ("track", "queue"):
             if event == "track":
                 self._set_status("")
+                self._prefetch_next()
             self.refresh()
             self.changed.emit()
         else:
             self._refresh_now()
         if self.player.state in ("playing", "loading"):
             self.started.emit()
+
+    def _prefetch_next(self) -> None:
+        """Scarica in anticipo il prossimo brano di YouTube, così parte subito."""
+        nxt = self.player.index + 1
+        if 0 <= nxt < len(self.player.tracks):
+            t = self.player.tracks[nxt]
+            if t.kind == "youtube":
+                try:
+                    youtube.prefetch(t)
+                except Exception:
+                    pass
 
     # Trasporto ----------------------------------------------------------------------------
     def _toggle(self) -> None:

@@ -92,12 +92,12 @@ class SoundboardSource:
 
     KEEP = FRAME + FRAME // 2          # audio lasciato nel buffer dopo la risincronizzazione (30 ms)
 
-    def __init__(self, ring: RingBuffer, sample_rate: int, has_sounds: Callable[[], bool],
+    def __init__(self, ring: RingBuffer, sample_rate, has_sounds: Callable[[], bool],
                  is_continuous: Callable[[], bool] = lambda: False,
                  on_idle: Callable[[], None] = lambda: None,
                  on_latency: Callable[[float], None] = lambda ms: None):
         self.ring = ring
-        self.sample_rate = sample_rate
+        self._sample_rate = sample_rate      # int o funzione (segue i cambi di frequenza del motore)
         self.has_sounds = has_sounds
         self.is_continuous = is_continuous
         self.on_idle = on_idle
@@ -106,6 +106,10 @@ class SoundboardSource:
         self._resync = True
         self._pending: float | None = None
         self.finished = False
+
+    @property
+    def sample_rate(self) -> int:
+        return int(self._sample_rate() if callable(self._sample_rate) else self._sample_rate)
 
     def is_opus(self) -> bool:
         return False
@@ -383,7 +387,7 @@ class DiscordBot:
         if vc.is_playing() or vc.is_paused():
             self._vc = vc
             return
-        source = SoundboardSource(self.engine.bot_ring, self.engine.sample_rate, self.engine.has_active_sounds,
+        source = SoundboardSource(self.engine.bot_ring, lambda: self.engine.sample_rate, self.engine.has_active_sounds,
                                   is_continuous=lambda: self.continuous, on_idle=self._on_idle,
                                   on_latency=self._on_latency)
         source.mark(t0)

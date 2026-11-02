@@ -504,6 +504,8 @@ class MainWindow(QMainWindow):
     # Impostazioni / salvataggio -----------------------------------------------------
     def open_settings(self, tab: int = 0) -> None:
         old_bot = dict(self.config.data["discord"])
+        old_audio = dict(self.config.data["audio"])
+        old_midi = self.config.data["midi"].get("input", "")
         dlg = SettingsDialog(self.config, self, midi_bridge=self.midi_bridge)
         dlg.tabs.setCurrentIndex(tab)
         self._settings_dialog = dlg
@@ -522,8 +524,11 @@ class MainWindow(QMainWindow):
                 self._update_exclusive()
             self.config.save()
             self._vst_cache = None
-            self.start_audio()
-            self.open_midi()
+            # riavvia audio e MIDI solo se sono cambiati (un riavvio interrompe per un attimo anche il bot)
+            if self.config.data["audio"] != old_audio or not self.engine.status.running:
+                self.start_audio()
+            if self.config.data["midi"].get("input", "") != old_midi:
+                self.open_midi()
 
     def schedule_save(self) -> None:
         self._save_timer.start()

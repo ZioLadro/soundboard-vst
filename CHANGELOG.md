@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.2 — 2026-11-02
+
+### Correzioni
+- YouTube: risolto «Server returned 403 Forbidden». L'audio non viene più letto da ffmpeg direttamente dai server
+  di YouTube (che rifiutano queste richieste) ma scaricato da yt-dlp in una cache locale e poi riprodotto.
+  Avanzamento del download mostrato nel player; il brano successivo della coda viene scaricato in anticipo;
+  cache limitata a 1,5 GB.
+- Il bot non smette più di suonare dopo aver premuto OK nelle impostazioni: il riavvio dell'audio ricreava il
+  buffer da cui legge il bot. Ora il buffer resta lo stesso, e audio e MIDI si riavviano solo se le loro
+  impostazioni sono cambiate.
+
 ## v0.4.1 — 2026-11-02
 
 ### Correzioni

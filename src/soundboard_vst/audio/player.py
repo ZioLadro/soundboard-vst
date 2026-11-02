@@ -97,6 +97,7 @@ class Player:
         self.repeat = "off"             # off | all | one
         self.shuffle = False
         self.error = ""
+        self.load_progress: float | None = None     # avanzamento del download (YouTube)
         self._ring = RingBuffer(2, sample_rate * 4, max_latency=sample_rate * 4)
         self._lock = threading.RLock()
         self._generation = 0
@@ -256,6 +257,11 @@ class Player:
         return out
 
     # Decodifica ----------------------------------------------------------------------------
+    def _set_progress(self, job: "_Job", fraction: float) -> None:
+        if job is self._job:
+            self.load_progress = fraction
+            self.on_change("progress")
+
     def _stop_job(self) -> None:
         job, self._job = self._job, None
         if job is not None:
@@ -271,7 +277,12 @@ class Player:
         try:
             if not exe:
                 raise RuntimeError("ffmpeg non disponibile")
-            url, headers = self.resolvers.get(track.kind, _default_resolver)(track)
+            resolver = self.resolvers.get(track.kind, _default_resolver)
+            try:
+                url, headers = resolver(track, progress=lambda f: self._set_progress(job, f))
+            except TypeError:
+                url, headers = resolver(track)
+            self.load_progress = None
             if job.stop.is_set():
                 return
             cmd = [exe, "-hide_banner", "-nostdin", "-loglevel", "error"]
