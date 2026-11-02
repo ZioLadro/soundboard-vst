@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 from . import APP_NAME, __version__, discord_bot, midi, midi_map, tts
 from .audio import devices
 from .audio.engine import AudioEngine
-from .audio.library import SoundCache, decode
+from .audio.library import SoundCache, decode, shape_params
 from .audio.plugins import scan_vst3
 from .discord_bot import DiscordBot
 from .config import Config, config_dir
@@ -28,6 +28,19 @@ from .ui.myinstants_dialog import MyInstantsDialog
 from .ui.settings_dialog import SettingsDialog
 from .ui.sound_dialog import MidiBridge
 from .ui.soundboard_view import SoundboardView
+
+
+def board_status_text(info: dict) -> str:
+    """Riga del menu del bot sullo stato del canale dedicato alla pulsantiera."""
+    import time
+
+    if info.get("error"):
+        return f"Pulsantiera nel canale: {info['error']}"
+    t = info.get("time")
+    if not t:
+        return "Pulsantiera nel canale: in attesa del primo aggiornamento"
+    where = f" (#{info['channel']})" if info.get("channel") else ""
+    return f"Pulsantiera nel canale{where}: controllata alle {time.strftime('%H:%M:%S', time.localtime(t))}"
 
 
 class TTSSignals(QObject):
@@ -102,6 +115,7 @@ class MainWindow(QMainWindow):
         self.board.phrase_changed.connect(self._prepare_phrase)
         self.board.preview_phrase = lambda text, voice, engine: self.speak(
             text, voice=voice, engine=engine, preview=True)
+        self.board.preview_audio = self.preview_audio
         self.tts_signals = TTSSignals()
         self.tts_signals.done.connect(self._on_tts_done)
         self.board.stop_requested.connect(self.engine.stop_sounds)
@@ -275,12 +289,13 @@ class MainWindow(QMainWindow):
     def play_sound(self, key: str, path: Path, scale: float = 1.0) -> None:
         if not self.engine.status.running:
             self.statusBar().showMessage("Audio fermo: premi «Avvia audio».", 4000)
+        cfg = self.config.data["sounds"].get(key, {})
         try:
-            data = self.cache.get(path)
+            data = self.cache.get_shaped(path, shape_params(cfg))      # inizio, fine e dissolvenze del pad
         except Exception as exc:
             QMessageBox.warning(self, "Suono", f"Impossibile leggere {path.name}:\n{exc}")
             return
-        vol = float(self.config.data["sounds"].get(key, {}).get("volume", 1.0))
+        vol = float(cfg.get("volume", 1.0))
         self.engine.play(key, data, vol * scale, overlap=self.board.overlap.isChecked())
         self.bot.notify_sound()
 
@@ -455,6 +470,11 @@ class MainWindow(QMainWindow):
                 info = m.addAction(f"Ultima latenza interna: {self.bot.last_latency_ms:.0f} ms "
                                    "(+ rete e Discord di chi ascolta)")
                 info.setEnabled(False)
+            if self.bot.board_channel:
+                m.addSeparator()
+                info = m.addAction(board_status_text(self.bot.board_info))
+                info.setEnabled(False)
+                m.addAction("Aggiorna ora la pulsantiera nel canale", self.bot.refresh_board)
         else:
             m.addAction("Avvia il bot", self.start_bot)
         m.addSeparator()
@@ -586,6 +606,15 @@ class MainWindow(QMainWindow):
 
     def _on_myinstants_added(self, path: Path) -> None:
         self.board.add_keys([path.name])
+
+    def preview_audio(self, data, gain: float = 1.0) -> None:
+        """Anteprima in cuffia di un suono già decodificato (es. con taglio e dissolvenze); None = ferma."""
+        if data is None:
+            self.engine.stop_sounds("__anteprima__")
+            return
+        if not self.engine.status.running:
+            self.statusBar().showMessage("Audio fermo: premi «Avvia audio».", 4000)
+        self.engine.play("__anteprima__", data, gain, preview=True)
 
     def preview_file(self, path: Path) -> None:
         """Riproduce un file solo in cuffia (non arriva a Discord)."""

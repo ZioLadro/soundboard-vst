@@ -321,6 +321,7 @@ class SoundboardView(QWidget):
         self.midi_port = ""
         self._learn_dialog: SoundSettingsDialog | None = None
         self.preview_phrase = None               # (testo, voce, motore) -> anteprima in cuffia (dalla finestra)
+        self.preview_audio = None                # (dati, guadagno) -> anteprima in cuffia; dati None = ferma
         self.config.data.setdefault("phrases", {})
         self.setAcceptDrops(True)
 
@@ -894,7 +895,9 @@ class SoundboardView(QWidget):
         s = self.config.sound_settings(key)
         default_name = tts.phrase_label(self.phrases.get(key, {}).get("text", "")) if tts.is_phrase(key) \
             else Path(key).stem
-        dlg = SoundSettingsDialog(default_name, s, self.midi_bridge, self.midi_port, self)
+        dlg = SoundSettingsDialog(default_name, s, self.midi_bridge, self.midi_port, self,
+                                  audio=self._audio_for(key), sample_rate=self.cache.sample_rate,
+                                  preview=self.preview_audio)
         self._learn_dialog = dlg
         try:
             ok = dlg.exec()
@@ -912,6 +915,18 @@ class SoundboardView(QWidget):
             self._refresh_library()
             self._rebuild_shortcuts()
             self.changed.emit()
+
+    def _audio_for(self, key: str):
+        """Il suono decodificato (per la forma d'onda), o None se non è disponibile."""
+        try:
+            if tts.is_phrase(key):
+                ph = self.phrases.get(key)
+                path = tts.cached_file(tts.phrase_spec(ph, self.config.data.get("tts", {}))) if ph else None
+            else:
+                path = self.path_for(key)
+            return self.cache.get(path) if path is not None and path.exists() else None
+        except Exception:
+            return None
 
     # Frasi (sintesi vocale) --------------------------------------------------------------
     def _phrase_dialog(self, phrase: dict | None) -> dict | None:

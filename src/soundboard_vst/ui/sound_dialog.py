@@ -1,11 +1,11 @@
-"""Impostazioni di un suono: volume, colore, icona, scorciatoia e nota MIDI."""
+"""Impostazioni di un suono: volume, inizio/fine e dissolvenze, colore, icona, scorciatoia e nota MIDI."""
 
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
-    QColorDialog, QDialog, QDialogButtonBox, QFileDialog, QMessageBox, QFormLayout, QGridLayout, QHBoxLayout, QKeySequenceEdit,
+    QDoubleSpinBox, QColorDialog, QDialog, QDialogButtonBox, QFileDialog, QMessageBox, QFormLayout, QGridLayout, QHBoxLayout, QKeySequenceEdit,
     QLabel, QLineEdit, QPushButton, QSlider, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -13,8 +13,10 @@ import hashlib
 from pathlib import Path
 
 from .. import midi
+from ..audio.library import shape, shape_params
 from ..config import config_dir
 from . import theme
+from .waveform import WaveformEditor
 
 PALETTE = [
     ("Rosso", "#e5534b"), ("Arancio", "#f0883e"), ("Giallo", "#d4a72c"), ("Verde", "#57ab5a"),
@@ -55,9 +57,15 @@ def text_color_for(bg: QColor) -> QColor:
 
 
 class SoundSettingsDialog(QDialog):
+    """``audio``/``sample_rate``: il suono decodificato, per la forma d'onda (None se non disponibile).
+    ``preview(dati, guadagno)``: anteprima in cuffia (con ``dati`` None la ferma)."""
+
     def __init__(self, name: str, settings: dict, bridge: MidiBridge | None = None,
-                 midi_port: str = "", parent=None):
+                 midi_port: str = "", parent=None, audio=None, sample_rate: int = 48000, preview=None):
         super().__init__(parent)
+        self._audio = audio
+        self._sr = int(sample_rate)
+        self._preview = preview
         self.setWindowTitle(f"Impostazioni — {name}")
         self.setMinimumWidth(460)
         self._bridge = bridge
@@ -102,6 +110,60 @@ class SoundSettingsDialog(QDialog):
         vrow = QHBoxLayout()
         vrow.addWidget(self.volume, 1)
         vrow.addWidget(vol_label)
+
+        # Inizio, fine e dissolvenze ---------------------------------------------------
+        start, end, fade_in, fade_out = shape_params(settings)
+        self.wave = WaveformEditor()
+        duration = 0.0
+        if audio is not None and getattr(audio, "size", 0):
+            self.wave.set_audio(audio, self._sr)
+            duration = self.wave.duration
+        self.wave.set_values(start, end, fade_in, fade_out)
+        limit = duration or 3600.0
+        self.t_start, self.t_end, self.t_in, self.t_out = (self._time_box(limit) for _ in range(4))
+        self.t_end.setSpecialValueText("fine")          # 0 = fino alla fine del suono
+        self.t_end.setToolTip("Dove finisce il suono (0 = fino alla fine)")
+        self.t_in.setToolTip("Dissolvenza in entrata: il volume sale da 0 in questo tempo")
+        self.t_out.setToolTip("Dissolvenza in uscita: il volume scende a 0 in questo tempo")
+        self.t_start.setValue(start)
+        self.t_end.setValue(0.0 if not end or (duration and end >= duration - 0.0005) else end)
+        self.t_in.setValue(fade_in)
+        self.t_out.setValue(fade_out)
+        for box in (self.t_start, self.t_end, self.t_in, self.t_out):
+            box.valueChanged.connect(self._from_boxes)
+        self.wave.changed.connect(self._from_wave)
+        trow = QHBoxLayout()
+        for label, box in (("Inizio", self.t_start), ("Fine", self.t_end),
+                           ("Dissolvenza in entrata", self.t_in), ("in uscita", self.t_out)):
+            trow.addWidget(QLabel(label))
+            trow.addWidget(box)
+        trow.addStretch(1)
+        listen = QPushButton("▶  Ascolta")
+        listen.setToolTip("Anteprima solo in cuffia, con taglio, dissolvenze e volume scelti")
+        listen.clicked.connect(self._listen)
+        stop = QPushButton("■")
+        stop.setToolTip("Ferma l'anteprima")
+        stop.clicked.connect(lambda: self._preview(None, 0.0) if self._preview else None)
+        reset = QPushButton("Ripristina")
+        reset.setToolTip("Suono intero, senza dissolvenze")
+        reset.clicked.connect(self._reset_shape)
+        for b in (listen, stop):
+            b.setEnabled(preview is not None and duration > 0)
+        brow = QHBoxLayout()
+        brow.addWidget(listen)
+        brow.addWidget(stop)
+        brow.addStretch(1)
+        brow.addWidget(reset)
+        shape_box = QVBoxLayout()
+        shape_box.addWidget(self.wave)
+        shape_box.addLayout(trow)
+        shape_box.addLayout(brow)
+        if not duration:
+            note = QLabel("Forma d'onda non disponibile (la frase non è ancora stata creata o il file non si legge): "
+                          "puoi comunque scrivere i tempi in secondi.")
+            note.setWordWrap(True)
+            note.setStyleSheet(f"color: {theme.MUTED}; font-size: 8pt;")
+            shape_box.addWidget(note)
 
         # Colore -------------------------------------------------------------------
         color_box = QWidget()
@@ -191,6 +253,7 @@ class SoundSettingsDialog(QDialog):
         form.addRow("Nome sul pad", self.label)
         form.addRow("Immagine", irow)
         form.addRow("Volume", vrow)
+        form.addRow("Taglio e\ndissolvenze", shape_box)
         form.addRow("Colore", color_box)
         form.addRow("Icona", ebox)
         form.addRow("Scorciatoia", srow)
@@ -205,6 +268,50 @@ class SoundSettingsDialog(QDialog):
         self._set_color(self.color)
         self._set_midi(self.midi_binding)
         self._set_image(self.image)
+
+    # Inizio, fine e dissolvenze -------------------------------------------------------------
+    def _time_box(self, limit: float) -> QDoubleSpinBox:
+        box = QDoubleSpinBox()
+        box.setRange(0.0, limit)
+        box.setDecimals(2)
+        box.setSingleStep(0.05)
+        box.setSuffix(" s")
+        box.setKeyboardTracking(False)
+        return box
+
+    def _from_wave(self) -> None:
+        w = self.wave
+        full = w.end >= w.duration - 0.0005
+        for box, value in ((self.t_start, w.start), (self.t_end, 0.0 if full else w.end),
+                           (self.t_in, w.fade_in), (self.t_out, w.fade_out)):
+            box.blockSignals(True)
+            box.setValue(value)
+            box.blockSignals(False)
+
+    def _from_boxes(self) -> None:
+        self.wave.set_values(self.t_start.value(), self.t_end.value(), self.t_in.value(), self.t_out.value())
+        if self.wave.duration:
+            self._from_wave()        # riporta nei campi eventuali valori fuori limite (es. fine prima dell'inizio)
+
+    def shape_values(self) -> dict:
+        end = self.t_end.value()
+        if self.wave.duration and end and end <= self.t_start.value():
+            end = 0.0
+        return {"start": round(self.t_start.value(), 3), "end": round(end, 3),
+                "fade_in": round(self.t_in.value(), 3), "fade_out": round(self.t_out.value(), 3)}
+
+    def _reset_shape(self) -> None:
+        for box in (self.t_start, self.t_end, self.t_in, self.t_out):
+            box.blockSignals(True)
+            box.setValue(0.0)
+            box.blockSignals(False)
+        self._from_boxes()
+
+    def _listen(self) -> None:
+        if self._preview is None or self._audio is None:
+            return
+        data = shape(self._audio, self._sr, *shape_params(self.shape_values()))
+        self._preview(data, self.volume.value() / 100.0)
 
     # Immagine ---------------------------------------------------------------------------
     def _set_image(self, path: str) -> None:
@@ -281,6 +388,8 @@ class SoundSettingsDialog(QDialog):
 
     def done(self, result: int) -> None:
         self._stop_learn()
+        if self._preview is not None:
+            self._preview(None, 0.0)          # chiudendo si ferma l'anteprima
         super().done(result)
 
     def values(self) -> dict:
@@ -292,4 +401,5 @@ class SoundSettingsDialog(QDialog):
             "color": self.color,
             "emoji": self.emoji.text().strip(),
             "midi": self.midi_binding,
+            **self.shape_values(),
         }

@@ -303,3 +303,145 @@ def test_bot_set_board_reports_to_gui():
     bot = DiscordBot(AudioEngine(48000, 512), lambda st: None, on_board=lambda c, ids: seen.append((c, ids)))
     bot.set_board(5, [1, 2])
     assert bot.board_channel == 5 and seen == [(5, [1, 2])]
+
+
+# Canale dedicato: resistenza agli errori ------------------------------------------------------
+from soundboard_vst import discord_commands as dc
+
+
+def http_error(cls, status, code=0):
+    resp = SimpleNamespace(status=status, reason="x")
+    return cls(resp, {"code": code, "message": "x"})
+
+
+@pytest.fixture
+def fast(monkeypatch):
+    monkeypatch.setattr(dc, "BOARD_REFRESH_S", 0.01)
+    monkeypatch.setattr(dc, "BOARD_RETRY_MAX_S", 0.04)
+    monkeypatch.setattr(dc, "BOARD_TIMEOUT_S", 0.2)
+
+
+def run_loop(cmds, until, timeout=3.0):
+    async def main():
+        cmds.start_board_loop()
+        t = asyncio.get_running_loop().time()
+        while not until() and asyncio.get_running_loop().time() - t < timeout:
+            await asyncio.sleep(0.01)
+        cmds._board_task.cancel()
+    asyncio.run(main())
+
+
+def test_loop_survives_startup_error_and_recovers(cmds, fast):
+    ch = FakeChannel()
+    real_send, fails = ch.send, {"n": 2}
+
+    async def flaky_send(content, view=None):
+        if fails["n"]:
+            fails["n"] -= 1
+            raise http_error(discord.HTTPException, 503)
+        return await real_send(content, view)
+
+    ch.send = flaky_send
+    cmds.client.get_channel = lambda cid: ch
+    cmds.bot.board_channel = 99
+    statuses = []
+    cmds.bot._set_status = lambda **kw: statuses.append(kw["message"])
+    run_loop(cmds, lambda: len(cmds.bot.board_messages) == 4 and not cmds.board_error)
+    assert len(cmds.bot.board_messages) == 4 and cmds.board_error == ""
+    assert "problema temporaneo" in statuses[0] and "di nuovo aggiornata" in statuses[-1]
+    assert len(statuses) == 2                           # un solo avviso, non uno per tentativo
+    assert cmds.bot.board_info["error"] == "" and cmds.bot.board_info["time"]
+
+
+def test_hung_request_times_out_and_retries(cmds, fast):
+    ch = FakeChannel()
+    real_send, hang = ch.send, {"n": 1}
+
+    async def hanging_send(content, view=None):
+        if hang["n"]:
+            hang["n"] -= 1
+            await asyncio.sleep(3600)                   # come una connessione morta dopo lo standby
+        return await real_send(content, view)
+
+    ch.send = hanging_send
+    cmds.client.get_channel = lambda cid: ch
+    cmds.bot.board_channel = 99
+    run_loop(cmds, lambda: len(cmds.bot.board_messages) == 4 and not cmds.board_error)
+    assert len(cmds.bot.board_messages) == 4 and not cmds._board_lock.locked()
+
+
+def test_channel_not_in_cache_and_archived_thread(cmds, fast):
+    ch = FakeChannel()
+    ch.archived, ch.locked, edits = True, False, []
+
+    async def edit(**kw):
+        edits.append(kw)
+        ch.archived = kw.get("archived", ch.archived)
+
+    ch.edit = edit
+    cmds.client.get_channel = lambda cid: None          # thread archiviato: non è più in cache
+
+    async def fetch(cid):
+        return ch
+
+    cmds.client.fetch_channel = fetch
+    cmds.bot.board_channel = 99
+    asyncio.run(cmds.sync_board(force=True))
+    assert edits == [{"archived": False}] and len(cmds.bot.board_messages) == 4
+
+
+def test_deleted_channel_is_forgotten_with_clear_message(cmds, fast):
+    cmds.client.get_channel = lambda cid: None
+
+    async def fetch(cid):
+        raise http_error(discord.NotFound, 404, 10003)
+
+    cmds.client.fetch_channel = fetch
+    cmds.bot.board_channel, cmds.bot.board_messages = 99, [1, 2]
+    with pytest.raises(dc.BoardError, match="eliminato"):
+        asyncio.run(cmds.sync_board(force=True))
+    assert cmds.bot.board_channel == 0 and cmds.bot.board_messages == []
+
+
+def test_interrupted_republish_keeps_track_of_sent_messages(cmds):
+    ch = FakeChannel()
+    real_send, count = ch.send, {"n": 0}
+
+    async def send_two_then_fail(content, view=None):
+        count["n"] += 1
+        if count["n"] == 3:
+            raise http_error(discord.HTTPException, 500)
+        return await real_send(content, view)
+
+    ch.send = send_two_then_fail
+    cmds.client.get_channel = lambda cid: ch
+    cmds.bot.board_channel = 99
+    with pytest.raises(discord.HTTPException):
+        asyncio.run(cmds.sync_board(force=True))
+    assert cmds.bot.board_messages == [1001, 1002]      # i due già inviati: verranno sostituiti, non duplicati
+    asyncio.run(cmds.sync_board(force=True))
+    assert ch.deleted == [1001, 1002] and len(cmds.bot.board_messages) == 4
+
+
+def test_refresh_button_restarts_dead_loop(cmds, fast):
+    ch = FakeChannel()
+    cmds.client.get_channel = lambda cid: ch
+    cmds.bot.board_channel = 99
+    asyncio.run(cmds.sync_board(force=True))
+    msg = SimpleNamespace(id=cmds.bot.board_messages[0])
+    it = interaction(7, message=msg)
+
+    async def press():
+        await cmds.navigate(it, 0, 0)
+        started = cmds._board_task is not None and not cmds._board_task.done()
+        cmds._board_task.cancel()
+        return started
+
+    assert asyncio.run(press()) and it.response.calls[0][0] == "defer"
+
+
+def test_describe_error_messages():
+    assert "permesso" in dc.describe_error(http_error(discord.Forbidden, 403, 50013))
+    assert "archiviato" in dc.describe_error(http_error(discord.HTTPException, 400, 50083))
+    assert "non risponde" in dc.describe_error(asyncio.TimeoutError())
+    assert "connessione" in dc.describe_error(type("ClientConnectorError", (Exception,), {})("x"))
