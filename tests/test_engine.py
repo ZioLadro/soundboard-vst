@@ -133,3 +133,37 @@ def test_preview_only_in_monitor():
     master, monitor = eng.render(N)
     assert not master.any()
     np.testing.assert_allclose(monitor, 0.2, atol=1e-6)
+
+
+def test_tts_has_its_own_mixer_channel():
+    from soundboard_vst.audio.engine import AudioEngine
+
+    eng = AudioEngine(48000, 512)
+    for s in eng.strips:
+        s.gain_db, s._current_gain = 0.0, 1.0
+    assert [s.id for s in eng.strips] == ["mic", "sounds", "tts", "player", "master", "monitor"]
+    eng.play("tts:1", np.full((2, 2048), 0.2, np.float32), strip="tts")
+    master, monitor = eng.render(512)
+    assert np.allclose(master, 0.2) and np.allclose(monitor, 0.2)
+    eng.tts.mute = True                                  # il suo fader/mute non tocca i suoni
+    eng.render(512)                                      # il mute scende in un blocco (niente clic)
+    eng.stop_sounds()
+    eng.play("tts:1", np.full((2, 4096), 0.2, np.float32), strip="tts")
+    eng.play("x", np.full((2, 4096), 0.1, np.float32))
+    master, _ = eng.render(512)
+    assert np.allclose(master, 0.1)
+    eng.tts.mute = False
+    eng.render(512)
+    eng.monitor_hear_tts = False                         # in cuffia si può escludere
+    _, monitor = eng.render(512)
+    assert np.allclose(monitor, 0.1)
+    eng.bot_streaming, eng.sounds_to_master = True, False   # con il bot: va al bot, non al cavo
+    eng.stop_sounds()
+    eng.play("tts:1", np.full((2, 2048), 0.3, np.float32), strip="tts")
+    master, _ = eng.render(512)
+    assert not master.any() and np.allclose(eng.bot_ring.read(512), 0.3)
+    d = eng.to_dict()
+    assert "tts" in d and d["monitor"]["hear_tts"] is False
+    eng2 = AudioEngine(48000, 512)
+    eng2.load_dict(d)
+    assert eng2.monitor_hear_tts is False

@@ -129,7 +129,7 @@ def test_settings_tab_saves_tts(win):
     previews = []
     dlg = SettingsDialog(win.config, win, preview_tts=lambda text, s: previews.append((text, s)))
     titles = [dlg.tabs.tabText(i) for i in range(dlg.tabs.count())]
-    assert titles[-1] == "Sintesi vocale" and titles[2] == "Bot Discord"
+    assert "Sintesi vocale" in titles and titles[2] == "Bot Discord"
     assert dlg.tts_values()["engine"] == "edge" and dlg.tts_values()["edge_voice"] == tts.DEFAULT_EDGE_VOICE
     dlg.tts_rate.setValue(20)
     dlg._test_tts()

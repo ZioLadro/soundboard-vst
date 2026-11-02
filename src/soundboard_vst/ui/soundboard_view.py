@@ -301,6 +301,7 @@ class SoundboardView(QWidget):
     phrase_requested = Signal(str)           # chiave di una frase da far dire
     phrase_changed = Signal(str)             # frase creata o modificata (per sintetizzarla subito)
     speak_requested = Signal(str)            # testo scritto nella barra «Fai parlare»
+    import_requested = Signal(object)        # {"source", "name", "start", "end"}: nuovo suono da YouTube o link
     stop_requested = Signal()
     myinstants_requested = Signal()
     sounds_reloaded = Signal()
@@ -335,6 +336,9 @@ class SoundboardView(QWidget):
         open_btn.clicked.connect(self.open_folder)
         add_btn = QPushButton("Aggiungi file…")
         add_btn.clicked.connect(self.import_dialog)
+        yt_btn = QPushButton("Da YouTube o link…")
+        yt_btn.setToolTip("Nuovo suono da un video di YouTube, da MyInstants o da un link a un file audio")
+        yt_btn.clicked.connect(self.import_from_link)
         mi_btn = QPushButton("Cerca su MyInstants")
         mi_btn.setObjectName("primary")
         mi_btn.clicked.connect(self.myinstants_requested)
@@ -343,7 +347,7 @@ class SoundboardView(QWidget):
         top = QHBoxLayout()
         top.addWidget(folder_title)
         top.addWidget(self.folder_label, 1)
-        for b in (change, open_btn, add_btn, mi_btn):
+        for b in (change, open_btn, add_btn, yt_btn, mi_btn):
             top.addWidget(b)
 
         # Libreria -----------------------------------------------------------------------
@@ -804,6 +808,13 @@ class SoundboardView(QWidget):
         exts = " ".join(f"*{e}" for e in sorted(SUPPORTED_EXTENSIONS))
         files, _ = QFileDialog.getOpenFileNames(self, "Aggiungi file audio", "", f"Audio ({exts})")
         self.import_files([Path(f) for f in files], target=target)
+
+    def import_from_link(self) -> None:
+        from .import_dialog import ImportDialog
+
+        dlg = ImportDialog(self)
+        if dlg.exec():
+            self.import_requested.emit(dlg.values())
 
     def import_files(self, files: list[Path], target: int | None = None) -> list[str]:
         """Copia i file nella cartella e li mette sui pad (dal pad ``target`` in poi)."""

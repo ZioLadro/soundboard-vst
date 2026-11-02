@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from .audio.mixer import MAX_DB, MIN_DB
 from .midi import MidiEvent, matches
 
-STRIPS = [("mic", "Microfono"), ("sounds", "Soundboard"), ("player", "Player"),
+STRIPS = [("mic", "Microfono"), ("sounds", "Soundboard"), ("tts", "Sintesi vocale"), ("player", "Player"),
           ("master", "Master → Discord"), ("monitor", "Monitor (cuffie)")]
 PAD_SLOTS = 16
 

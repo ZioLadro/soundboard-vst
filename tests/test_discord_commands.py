@@ -7,7 +7,7 @@ import pytest
 
 from soundboard_vst.discord_bot import DiscordBot, invite_url
 from soundboard_vst.discord_commands import (
-    ACCESS_EVERYONE, ACCESS_OWNER, ACCESS_ROLE, CHANNEL_PADS, PANEL_PADS, Commands, allowed,
+    CHANNEL_PADS, PANEL_PADS, Commands, allowed, default_permissions, normalize_permissions,
     board_signature, button_label, channel_messages, color_style, page_pads, panel_positions,
     panel_view, resolve_sound, search_sounds,
 )
@@ -32,16 +32,37 @@ def make_state(pages):
 
 
 # Funzioni pure ------------------------------------------------------------------------------
-def test_access_levels():
-    roles = [SimpleNamespace(id=55, name="Soundboard")]
-    assert allowed(ACCESS_OWNER, 1, [], owner_id=1)
-    assert not allowed(ACCESS_OWNER, 2, roles, owner_id=1)
-    assert not allowed(ACCESS_OWNER, 2, [], owner_id=0)          # nessun proprietario impostato
-    assert allowed(ACCESS_EVERYONE, 2, [], owner_id=1)
-    assert allowed(ACCESS_ROLE, 2, roles, owner_id=1, role="@soundboard")
-    assert allowed(ACCESS_ROLE, 2, roles, owner_id=1, role="55")
-    assert not allowed(ACCESS_ROLE, 2, roles, owner_id=1, role="DJ")
-    assert not allowed(ACCESS_ROLE, 2, roles, owner_id=1, role="")
+def test_permissions_groups_roles_users_and_blocks():
+    roles = [SimpleNamespace(id=55, name="DJ")]
+    perms = default_permissions()
+    assert allowed("suoni", 2, [], 1, perms) and allowed("parla", 2, [], 1, perms)   # predefinito: tutti
+    assert not allowed("musica", 2, roles, 1, perms) and allowed("musica", 1, [], 1, perms)  # il proprietario sì
+    assert allowed("gestione", 2, [], 1, perms, is_admin=True)                       # amministratori
+    perms["admins"] = False
+    assert not allowed("gestione", 2, [], 1, perms, is_admin=True)
+    perms["groups"]["musica"]["roles"] = ["55"]                                      # ruolo per ID
+    perms["groups"]["controllo"]["roles"] = ["@dj"]                                  # o per nome
+    perms["groups"]["gestione"]["users"] = ["7"]
+    assert allowed("musica", 2, roles, 1, perms) and allowed("controllo", 2, roles, 1, perms)
+    assert not allowed("musica", 2, [], 1, perms)
+    assert allowed("gestione", 7, [], 1, perms) and not allowed("gestione", 8, [], 1, perms)
+    perms["blocked"] = ["7"]
+    assert not allowed("suoni", 7, [], 1, perms) and not allowed("gestione", 7, [], 1, perms)
+    assert allowed("suoni", 1, [], 1, {**perms, "blocked": ["1"]})                   # il proprietario mai bloccato
+    assert not allowed("suoni", 2, [], 0, {"groups": {}})                            # gruppo sconosciuto: no
+
+
+def test_old_permission_settings_are_converted():
+    old = {"enabled": True, "sounds_access": "role", "control_access": "everyone", "role": "@Amici"}
+    p = normalize_permissions(None, old)
+    assert p["groups"]["suoni"] == {"everyone": False, "roles": ["Amici"], "users": []}
+    assert p["groups"]["parla"]["roles"] == ["Amici"]
+    assert all(p["groups"][g]["everyone"] for g in ("musica", "controllo", "gestione"))
+    assert p["admins"] is False                                       # come prima: niente diritti in più
+    fresh = normalize_permissions(None, {"enabled": True})
+    assert fresh == default_permissions()
+    saved = normalize_permissions({"admins": False, "blocked": [9], "groups": {"suoni": {"users": [3]}, "x": {}}})
+    assert saved["blocked"] == ["9"] and saved["groups"]["suoni"] == {"everyone": False, "roles": [], "users": ["3"]}
 
 
 def test_button_label_and_colors():
@@ -113,10 +134,13 @@ def test_invite_includes_commands_scope_and_message_permissions():
 class FakeBot:
     def __init__(self, state):
         self.state = state
-        self.commands_cfg = {"enabled": True, "sounds_access": ACCESS_EVERYONE,
-                             "control_access": ACCESS_OWNER, "role": ""}
+        self.commands_cfg = {"enabled": True}
+        self.permissions = default_permissions()
+        self.greetings = {}
+        self.known_users = {}
         self.owner_id = 1
         self.sent = []
+        self.sent_full = []
         self.board_channel, self.board_messages = 0, []
         self.status = SimpleNamespace(message="")
 
@@ -124,7 +148,13 @@ class FakeBot:
         return self.state
 
     def send_command(self, c):
-        self.sent.append(c)
+        self.sent_full.append(c)
+        self.sent.append({k: v for k, v in c.items() if k not in ("by", "_done")})
+        if callable(c.get("_done")):
+            c["_done"](True, f"ok {c['cmd']}")
+
+    def remember_user(self, user):
+        self.known_users[str(user.id)] = getattr(user, "display_name", "?")
 
     def set_board(self, cid, ids):
         self.board_channel, self.board_messages = cid, list(ids)
@@ -144,7 +174,11 @@ def cmds():
 def test_slash_commands_build_valid_payloads(cmds):
     payloads = {c.name: c.to_dict(cmds.tree) for c in cmds.tree.get_commands()}
     assert set(payloads) == {"suona", "parla", "stop", "pulsantiera", "canale-pulsantiera", "entra", "esci",
-                             "player", "riproduci", "volume", "aiuto"}
+                             "player", "riproduci", "volume", "aiuto", "aggiungi-suono", "mio-suono"}
+    add = {o["name"]: o for o in payloads["aggiungi-suono"]["options"]}
+    assert add["file"]["type"] == 11 and not add["file"]["required"] and not add["link"]["required"]
+    mine = {o["name"]: o for o in payloads["mio-suono"]["options"]}
+    assert mine["entrata"]["autocomplete"] and mine["utente"]["type"] == 6
     parla = payloads["parla"]["options"][0]
     assert parla["required"] and parla["max_length"] == 300
     for p in payloads.values():
@@ -153,7 +187,7 @@ def test_slash_commands_build_valid_payloads(cmds):
     assert suona["autocomplete"] and suona["required"]
     vol = {o["name"]: o for o in payloads["volume"]["options"]}
     assert vol["db"]["min_value"] == -60 and vol["db"]["max_value"] == 12
-    assert {c["value"] for c in vol["canale"]["choices"]} == {"mic", "sounds", "player", "master", "monitor"}
+    assert {c["value"] for c in vol["canale"]["choices"]} == {"mic", "sounds", "tts", "player", "master", "monitor"}
 
 
 def btn(item):
@@ -221,7 +255,7 @@ def test_press_pad_plays_and_checks_permissions(cmds):
     kind, text, kw = it.response.calls[0]
     assert kind == "send" and kw["ephemeral"] and "/entra" in text
 
-    cmds.bot.commands_cfg["sounds_access"] = ACCESS_OWNER
+    cmds.bot.permissions["groups"]["suoni"]["everyone"] = False
     cmds.bot.sent.clear()
     it = interaction(7)
     asyncio.run(cmds.press_pad(it, 0, 3))

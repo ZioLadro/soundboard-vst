@@ -13,7 +13,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from . import APP_NAME, __version__, discord_bot, midi, midi_map, tts
+from . import APP_NAME, __version__, discord_bot, eventlog, importer, midi, midi_map, tts
+from .discord_bot import normalize_greetings
+from .discord_commands import normalize_permissions
+from .eventlog import acting
 from .audio import devices
 from .audio.engine import AudioEngine
 from .audio.library import SoundCache, decode, shape_params
@@ -21,6 +24,7 @@ from .audio.plugins import scan_vst3
 from .discord_bot import DiscordBot
 from .config import Config, config_dir
 from .ui import theme
+from .ui.log_view import LogView
 from .ui.mixer_view import MixerView
 from .ui.player_view import PlayerView
 from .ui.remote_view import RemoteController, RemoteDialog
@@ -41,6 +45,11 @@ def board_status_text(info: dict) -> str:
         return "Pulsantiera nel canale: in attesa del primo aggiornamento"
     where = f" (#{info['channel']})" if info.get("channel") else ""
     return f"Pulsantiera nel canale{where}: controllata alle {time.strftime('%H:%M:%S', time.localtime(t))}"
+
+
+class ImportSignals(QObject):
+    """Riporta nel thread dell'interfaccia i suoni importati (o gli errori)."""
+    done = Signal(object, object)        # richiesta (dict), risultato (importer.Result o eccezione)
 
 
 class TTSSignals(QObject):
@@ -116,6 +125,9 @@ class MainWindow(QMainWindow):
         self.board.preview_phrase = lambda text, voice, engine: self.speak(
             text, voice=voice, engine=engine, preview=True)
         self.board.preview_audio = self.preview_audio
+        self.import_signals = ImportSignals()
+        self.import_signals.done.connect(self._on_import_done)
+        self.board.import_requested.connect(lambda v: self.import_sound(v["source"], v["name"], v["start"], v["end"]))
         self.tts_signals = TTSSignals()
         self.tts_signals.done.connect(self._on_tts_done)
         self.board.stop_requested.connect(self.engine.stop_sounds)
@@ -142,6 +154,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.board, "Soundboard")
         self.tabs.addTab(self.player_view, "Player")
         self.tabs.addTab(mixer_page, "Mixer")
+        self.log_view = LogView()
+        self.tabs.addTab(self.log_view, "Registro")
         self.tabs.currentChanged.connect(lambda _: self.schedule_save())
         self._myinstants: MyInstantsDialog | None = None
 
@@ -286,17 +300,26 @@ class MainWindow(QMainWindow):
 
         threading.Thread(target=run, name="preload-sounds", daemon=True).start()
 
-    def play_sound(self, key: str, path: Path, scale: float = 1.0) -> None:
+    def play_sound(self, key: str, path: Path, scale: float = 1.0, who: str | None = None,
+                   text: str = "") -> None:
         if not self.engine.status.running:
             self.statusBar().showMessage("Audio fermo: premi «Avvia audio».", 4000)
         cfg = self.config.data["sounds"].get(key, {})
         try:
             data = self.cache.get_shaped(path, shape_params(cfg))      # inizio, fine e dissolvenze del pad
         except Exception as exc:
+            eventlog.log(eventlog.ERROR, f"Impossibile leggere {path.name}: {exc}", who)
             QMessageBox.warning(self, "Suono", f"Impossibile leggere {path.name}:\n{exc}")
             return
+        if key == tts.LIVE_KEY:
+            eventlog.log(eventlog.VOICE, f"«{text}»", who)
+        else:
+            eventlog.log(eventlog.VOICE if tts.is_phrase(key) else eventlog.SOUND,
+                         self.board.display_name(key), who)
         vol = float(cfg.get("volume", 1.0))
-        self.engine.play(key, data, vol * scale, overlap=self.board.overlap.isChecked())
+        speech = key == tts.LIVE_KEY or tts.is_phrase(key)      # frasi: canale «Sintesi vocale» del mixer
+        self.engine.play(key, data, vol * scale, overlap=self.board.overlap.isChecked(),
+                         strip="tts" if speech else "sounds")
         self.bot.notify_sound()
 
     def trigger(self, key: str, scale: float = 1.0) -> None:
@@ -323,7 +346,8 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Sintesi vocale non disponibile: {reason}", 8000)
             return
         fut = tts.synthesize_async(spec)
-        req = {"key": key, "preview": preview, "scale": scale, "text": spec.text}
+        req = {"key": key, "preview": preview, "scale": scale, "text": spec.text,
+               "who": eventlog.current_actor()}          # la frase arriva dopo: chi l'ha chiesta va ricordato
         if fut.done():
             self._on_tts_done(req, fut)          # già in cache: parte subito
             return
@@ -335,11 +359,13 @@ class MainWindow(QMainWindow):
             path = fut.result()
         except Exception as exc:
             self.statusBar().showMessage(f"Sintesi vocale non riuscita: {exc}", 10000)
+            if not req["preview"]:
+                eventlog.log(eventlog.ERROR, f"Sintesi vocale non riuscita: {exc}", req.get("who"))
             return
         if req["preview"]:
             self.preview_file(path)
         else:
-            self.play_sound(req["key"], path, req["scale"])
+            self.play_sound(req["key"], path, req["scale"], who=req.get("who"), text=req["text"])
 
     def _prepare_phrase(self, key: str) -> None:
         """Sintetizza in anticipo una frase dei pad, così alla pressione parte subito."""
@@ -366,6 +392,8 @@ class MainWindow(QMainWindow):
         self.bot.continuous = bool(dc.get("continuous", True))
         self.bot.show_presence = bool(dc.get("presence", True))
         self.bot.commands_cfg = dict(dc.get("commands", {}))
+        self._apply_bot_rules()
+        self.bot.known_users = {**dc.get("known_users", {}), **self.bot.known_users}
         try:
             self.bot.board_channel = int(dc.get("board_channel") or 0)
             self.bot.board_messages = [int(m) for m in dc.get("board_messages") or []]
@@ -507,6 +535,10 @@ class MainWindow(QMainWindow):
         elif not st.conflict:
             self._bot_conflict_shown = False
         self.statusBar().showMessage(f"Bot: {st.message}", 6000)
+        if st.message and st.message != getattr(self, "_last_bot_message", None):
+            self._last_bot_message = st.message
+            eventlog.log(eventlog.ERROR if st.conflict or "Errore" in st.message or "non valido" in st.message
+                         else eventlog.DISCORD, st.message, "Bot")
         self._update_exclusive()
 
     def _update_exclusive(self) -> None:
@@ -539,8 +571,9 @@ class MainWindow(QMainWindow):
             return
         targets = midi_map.targets_for(self.config.data.get("midi_map", {}), ev)
         if targets:
-            for t in targets:
-                self._run_target(t, ev)
+            with acting("MIDI"):
+                for t in targets:
+                    self._run_target(t, ev)
             return
         if ev.kind == "cc" and not ev.pressed:
             return
@@ -548,7 +581,8 @@ class MainWindow(QMainWindow):
         if key is None:
             return
         scale = ev.value / 127.0 if self.config.data["midi"].get("velocity") else 1.0
-        self.trigger(key, scale)
+        with acting("MIDI"):
+            self.trigger(key, scale)
 
     def _run_target(self, target, ev) -> None:
         """Esegue un'azione della mappa MIDI."""
@@ -659,7 +693,10 @@ class MainWindow(QMainWindow):
         old_audio = dict(self.config.data["audio"])
         old_midi = self.config.data["midi"].get("input", "")
         dlg = SettingsDialog(self.config, self, midi_bridge=self.midi_bridge,
-                             preview_tts=lambda text, settings: self.speak(text, preview=True, settings=settings))
+                             preview_tts=lambda text, settings: self.speak(text, preview=True, settings=settings),
+                             directory=lambda: {"roles": list(self.bot.known_roles),
+                                                "users": dict(self.bot.known_users)},
+                             sounds=self.sound_choices())
         dlg.tabs.setCurrentIndex(tab)
         self._settings_dialog = dlg
         try:
@@ -678,6 +715,7 @@ class MainWindow(QMainWindow):
                 self.bot.follow = dc.get("follow", True)
                 self.bot.continuous = bool(dc.get("continuous", True))
                 self.bot.show_presence = bool(dc.get("presence", True))   # il bot lo applica entro pochi secondi
+                self._apply_bot_rules()
                 self._update_exclusive()
                 if dc.get("commands") != old_bot.get("commands"):
                     was_enabled = bool(self.bot.commands_cfg.get("enabled", True))
@@ -695,9 +733,77 @@ class MainWindow(QMainWindow):
     def schedule_save(self) -> None:
         self._save_timer.start()
 
+    def _apply_bot_rules(self) -> None:
+        """Permessi e suoni di entrata/uscita dalle impostazioni al bot (letti dal suo thread)."""
+        dc = self.config.data["discord"]
+        self.bot.permissions = normalize_permissions(dc.get("permissions"), dc.get("commands"))
+        self.bot.greetings = normalize_greetings(dc.get("greetings"))
+
+    def sound_choices(self) -> list[tuple[str, str]]:
+        b = self.board
+        return [(k, f"{b._emoji(k)}  {b.display_name(k)}".strip()) for k in b.all_keys()]
+
+    # Nuovi suoni (YouTube, link, file, Discord) ---------------------------------------------
+    def import_sound(self, source: str, name: str = "", start="", end="", local: bool = False,
+                     done=None, who: str | None = None) -> None:
+        """Importa un suono in background; ``done(ok, messaggio)`` viene chiamato alla fine (thread GUI)."""
+        req = {"source": source, "name": name, "start": start, "end": end, "local": local, "done": done,
+               "who": who or eventlog.current_actor()}
+        self.statusBar().showMessage("Importo il suono…", 5000)
+        folder = self.board.folder
+
+        def run():
+            try:
+                res = importer.import_source(source, folder, name, start, end, local=local)
+            except Exception as exc:
+                res = exc
+            self.import_signals.done.emit(req, res)
+
+        threading.Thread(target=run, name="import-sound", daemon=True).start()
+
+    def _on_import_done(self, req: dict, res) -> None:
+        done = req.get("done")
+        if isinstance(res, Exception):
+            msg = str(res) if isinstance(res, importer.ImportError_) else f"{res.__class__.__name__}: {res}"
+            eventlog.log(eventlog.ERROR, f"Import non riuscito ({req['source'][:120]}): {msg}", req["who"])
+            self.statusBar().showMessage(f"Import non riuscito: {msg}", 10000)
+            if done:
+                done(False, f"❌ Non sono riuscito ad aggiungere il suono: {msg}")
+            return
+        key = res.path.name
+        self.board.add_keys([key])
+        where = next(((p, i) for p, pg in enumerate(self.board.layout_model.pages)
+                      for i, k in pg.slots.items() if k == key), None)
+        place = f" (pagina «{self.board.layout_model.pages[where[0]].name}», pad {where[1] + 1})" if where else ""
+        cut = " · tagliato a 10 minuti" if res.truncated else ""
+        eventlog.log(eventlog.IMPORT, f"Nuovo suono «{Path(key).stem}» da {req['source'][:120]}{place}", req["who"])
+        self.statusBar().showMessage(f"Aggiunto «{Path(key).stem}»{place}{cut}", 8000)
+        if done:
+            done(True, f"✅ Aggiunto **{Path(key).stem}**{place}{cut}.")
+
+    def set_greeting(self, user_id: str, name: str, join=None, leave=None) -> dict:
+        """Suoni di entrata/uscita di un utente (None = invariato, "" = nessuno). Restituisce la voce."""
+        dc = self.config.data["discord"]
+        g = normalize_greetings(dc.get("greetings"))
+        entry = g["users"].setdefault(str(user_id), {"name": name, "join": "", "leave": ""})
+        entry["name"] = name or entry.get("name", "")
+        if join is not None:
+            entry["join"] = join
+        if leave is not None:
+            entry["leave"] = leave
+        result = dict(entry)
+        if not entry["join"] and not entry["leave"]:
+            g["users"].pop(str(user_id), None)
+        dc["greetings"] = g
+        self.bot.greetings = normalize_greetings(g)
+        self.schedule_save()
+        return result
+
     def save(self) -> None:
         self.config.data["mixer"] = self.engine.to_dict()
         self.config.data["player"] = self.engine.player.to_dict()
+        known = self.config.data["discord"].setdefault("known_users", {})
+        known.update(self.bot.known_users)            # chi il bot ha visto: per scegliere i permessi
         self.config.data["window"] = {
             "geometry": bytes(self.saveGeometry().toBase64()).decode(),
             "library_splitter": bytes(self.board.splitter.saveState().toBase64()).decode(),
@@ -731,6 +837,7 @@ class MainWindow(QMainWindow):
         self.remote.stop()
         self.engine.player.close()
         self.player_view.shutdown()
+        self.log_view.shutdown()
         self.engine.stop()
         self.midi_in.close()
         super().closeEvent(event)

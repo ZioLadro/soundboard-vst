@@ -18,6 +18,7 @@ from typing import Callable
 
 import numpy as np
 
+from . import eventlog
 from .audio.ringbuffer import DriftReader, RingBuffer
 
 DISCORD_SR = 48000
@@ -106,6 +107,49 @@ def presence_text(state: dict) -> str | None:
     if not title:
         return None
     return title if len(title) <= PRESENCE_MAX else title[:PRESENCE_MAX - 1] + "…"
+
+
+# Suoni di entrata e uscita -----------------------------------------------------------------------
+def default_greetings() -> dict:
+    return {"enabled": True, "cooldown": 30, "users": {}, "default": {"join": "", "leave": ""},
+            "announce": {"enabled": False, "join": "{nome} è entrato", "leave": "{nome} è uscito"}}
+
+
+def normalize_greetings(g: dict | None) -> dict:
+    out = default_greetings()
+    if not isinstance(g, dict):
+        return out
+    out["enabled"] = bool(g.get("enabled", True))
+    try:
+        out["cooldown"] = max(0, min(3600, int(g.get("cooldown", 30))))
+    except (TypeError, ValueError):
+        pass
+    for uid, u in (g.get("users") or {}).items():
+        if isinstance(u, dict) and str(uid).strip():
+            out["users"][str(uid)] = {"name": str(u.get("name", "")), "join": str(u.get("join") or ""),
+                                      "leave": str(u.get("leave") or "")}
+    d = g.get("default") or {}
+    out["default"] = {"join": str(d.get("join") or ""), "leave": str(d.get("leave") or "")}
+    a = g.get("announce") or {}
+    out["announce"] = {"enabled": bool(a.get("enabled", False)),
+                       "join": str(a.get("join") or out["announce"]["join"]),
+                       "leave": str(a.get("leave") or out["announce"]["leave"])}
+    return out
+
+
+def greeting_action(greetings: dict, user_id: int, name: str, event: str) -> dict | None:
+    """Cosa fare quando un utente entra (``join``) o esce (``leave``) dal canale del bot:
+    il suo suono, altrimenti quello per tutti, altrimenti l'annuncio con la sintesi vocale."""
+    if not greetings.get("enabled", True):
+        return None
+    key = (greetings.get("users", {}).get(str(user_id)) or {}).get(event) or \
+        (greetings.get("default") or {}).get(event)
+    if key:
+        return {"cmd": "sound", "key": key}
+    ann = greetings.get("announce") or {}
+    if ann.get("enabled") and ann.get(event):
+        return {"cmd": "say", "text": ann[event].replace("{nome}", name)}
+    return None
 
 
 def application_id_from_token(token: str) -> int | None:
@@ -271,6 +315,11 @@ class DiscordBot:
         self.board_messages: list[int] = []
         self.board_info: dict = {}          # ultimo aggiornamento del canale dedicato: {"time", "error", "channel"}
         self.show_presence = True           # stato del bot su Discord: «Ascolta <brano del player>»
+        self.permissions: dict = {}         # vedi discord_commands.normalize_permissions
+        self.greetings: dict = default_greetings()
+        self.known_users: dict[str, str] = {}   # ID -> nome, di chi il bot ha visto (comandi, canali vocali)
+        self.known_roles: list[dict] = []       # ruoli dei server: {"id", "name", "guild"}
+        self._greeted: dict[tuple, float] = {}
         self._presence_task = None
         self._presence_dirty = True         # da rimandare (es. dopo una riconnessione)
         self._commands = None
@@ -329,6 +378,7 @@ class DiscordBot:
         @client.event
         async def on_ready():
             bot.application_id = client.application_id or bot.application_id
+            bot._collect_directory()
             bot._set_status(online=True, message=f"Online come {client.user}" if bot.dave_ok
                             else DAVE_INCOMPATIBLE)
             if bot.follow:
@@ -347,7 +397,20 @@ class DiscordBot:
             bot._start_presence_loop()
 
         @client.event
+        async def on_guild_role_create(role):
+            bot._collect_directory()
+
+        @client.event
+        async def on_guild_role_update(before, after):
+            bot._collect_directory()
+
+        @client.event
+        async def on_guild_role_delete(role):
+            bot._collect_directory()
+
+        @client.event
         async def on_guild_join(guild):
+            bot._collect_directory()
             synced.add(guild.id)
             await commands.sync([guild])
 
@@ -372,6 +435,7 @@ class DiscordBot:
                         await asyncio.sleep(0.5)          # attende che la connessione voce sia pronta
                         await bot._start_playing()
                 return
+            bot._on_member_voice(member, before, after)
             if member.id != bot.owner_id or not bot.follow:
                 return
             if after.channel is not None and after.channel != before.channel:
@@ -428,6 +492,56 @@ class DiscordBot:
             asyncio.run_coroutine_threadsafe(coro, self._loop)
         else:
             coro.close()
+
+    # Utenti, ruoli, entrate e uscite ------------------------------------------------------------
+    def remember_user(self, user) -> None:
+        if user is None or getattr(user, "bot", False):
+            return
+        name = getattr(user, "display_name", None) or getattr(user, "name", None)
+        if name:
+            self.known_users[str(user.id)] = str(name)
+
+    def _collect_directory(self) -> None:
+        """Ruoli dei server e utenti già nei canali vocali, per scegliere i permessi nella finestra."""
+        client = self._client
+        if client is None:
+            return
+        roles = []
+        for guild in client.guilds:
+            for r in getattr(guild, "roles", []):
+                if r.id == guild.id or getattr(r, "managed", False):
+                    continue                       # @everyone e ruoli dei bot
+                roles.append({"id": str(r.id), "name": r.name, "guild": guild.name})
+            for ch in list(getattr(guild, "voice_channels", [])) + list(getattr(guild, "stage_channels", [])):
+                for m in getattr(ch, "members", []):
+                    self.remember_user(m)
+        self.known_roles = roles
+
+    def _on_member_voice(self, member, before, after) -> None:
+        """Un altro utente entra o esce dal canale in cui è il bot: registro e suono di entrata/uscita."""
+        if getattr(member, "bot", False):
+            return
+        self.remember_user(member)
+        vc = getattr(member.guild, "voice_client", None)
+        channel = getattr(vc, "channel", None) if vc is not None and vc.is_connected() else None
+        if channel is None or before.channel == after.channel:
+            return
+        if after.channel == channel:
+            event, verb = "join", "è entrato in"
+        elif before.channel == channel:
+            event, verb = "leave", "è uscito da"
+        else:
+            return
+        name = member.display_name
+        eventlog.log(eventlog.DISCORD, f"{name} {verb} #{channel.name}", "Bot")
+        now = time.monotonic()
+        key = (member.id, event)
+        if now - self._greeted.get(key, -1e9) < self.greetings.get("cooldown", 30):
+            return                                 # entra ed esce di continuo: niente raffica di suoni
+        action = greeting_action(self.greetings, member.id, name, event)
+        if action is not None:
+            self._greeted[key] = now
+            self.send_command({**action, "by": f"{name} ({'entrata' if event == 'join' else 'uscita'})"})
 
     # Stato su Discord ---------------------------------------------------------------------------
     def _start_presence_loop(self) -> None:
