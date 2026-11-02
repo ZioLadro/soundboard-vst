@@ -98,7 +98,6 @@ class RemoteController(QObject):
         eng, board = w.engine, w.board
         playing = eng.playing_keys()
         sounds = w.config.data["sounds"]
-        existing = set(board._keys)
         lay = board.layout_model
         pages = []
         for pg in lay.pages:
@@ -107,15 +106,13 @@ class RemoteController(QObject):
                 if 0 <= i < lay.size:
                     c = sounds.get(key, {})
                     pads[i] = {
-                        "key": key, "label": c.get("label") or Path(key).stem, "emoji": c.get("emoji", ""),
+                        "key": key, "label": board.display_name(key), "emoji": board._emoji(key),
                         "color": c.get("color", ""), "image": bool(c.get("image")) and Path(c["image"]).is_file(),
-                        "playing": key in playing, "missing": key not in existing,
+                        "playing": key in playing, "missing": not board.exists(key),
                     }
             pages.append({"name": pg.name, "pads": pads})
-        library = []
-        for key in board._keys:
-            c = sounds.get(key, {})
-            library.append({"key": key, "label": c.get("label") or Path(key).stem, "emoji": c.get("emoji", "")})
+        library = [{"key": key, "label": board.display_name(key), "emoji": board._emoji(key)}
+                   for key in board.all_keys()]
         p = eng.player
         cur = p.current
         bot = w.bot
@@ -147,8 +144,12 @@ class RemoteController(QObject):
                 w.board.pages.setCurrentIndex(int(c.get("index", 0)))
             elif cmd == "sound":
                 key = str(c.get("key", ""))
-                if key in w.board._keys:          # solo file della cartella dei suoni
+                if w.board.exists(key):          # solo file della cartella o frasi esistenti
                     w.board.play_key(key, quiet=True)
+            elif cmd == "say":
+                text = str(c.get("text", ""))[:300]
+                if text.strip():
+                    w.speak(text)
             elif cmd == "stop_sounds":
                 w.engine.stop_sounds()
             elif cmd == "player":

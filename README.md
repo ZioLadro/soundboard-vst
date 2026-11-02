@@ -22,6 +22,7 @@ la tua voce **più** i suoni, già mixati ed elaborati.
   comandi del bot, protetta da una chiave; si apre inquadrando un QR code. Dall'esterno funziona con Tailscale.
 - **Bot Discord integrato**: il bot entra nel canale vocale in cui ti trovi (e ti segue se cambi canale) e riproduce i suoni che premi, con gli effetti e il fader del canale Soundboard. Per i suoni non serve VB-Cable.
 - **Comandi e pulsantiera su Discord**: `/suona`, `/pulsantiera` (i pad come pulsanti in un messaggio), un **canale dedicato** con tutti i pad sempre aggiornati, e comandi per player, volume ed entrata/uscita del bot, con permessi per ruolo.
+- **Sintesi vocale**: scrivi una frase e la soundboard la dice (anche su Discord), con voci neurali Microsoft o voci del sistema offline; e **frasi sui pad**, che funzionano come gli altri suoni.
 - **Ingresso**: scegli microfono o scheda audio.
 - **Uscita verso Discord**: il mix va su un cavo audio virtuale, che gli altri programmi vedono come microfono.
 - **Monitor**: uscita separata per le cuffie, per sentire i suoni (e, se vuoi, te stesso).
@@ -150,6 +151,7 @@ Con il bot online, in qualsiasi canale di testo del server:
 | `/entra` · `/esci` | Il bot entra nel canale vocale di chi scrive il comando, o esce |
 | `/player` · `/riproduci` | Play/pausa, stop, successivo, precedente · aggiunge un link o una ricerca di YouTube |
 | `/volume canale: db:` | Volume di un canale del mixer, da −60 a +12 dB |
+| `/parla testo:` | La sintesi vocale dice la frase (fino a 300 caratteri) |
 | `/aiuto` | Elenco dei comandi |
 
 I colori dei pulsanti seguono quelli dei pad (rosso, verde, blu o grigio: Discord ha solo questi quattro) e l'emoji compare nel testo. I pulsanti funzionano anche dopo aver riavviato la soundboard. Per il canale dedicato conviene un canale in cui solo il bot può scrivere.
@@ -162,6 +164,21 @@ I colori dei pulsanti seguono quelli dei pad (rosso, verde, blu o grigio: Discor
 - Se disattivi «Comandi da Discord», il bot li toglie dai server.
 
 **Bot invitato con una versione precedente**: invitalo di nuovo con «Invita il bot nel server…» (non serve toglierlo prima). Il nuovo link aggiunge i comandi e i permessi *Visualizza canale* e *Invia messaggi* per il canale dedicato. I comandi compaiono subito nei server in cui c'è il bot; se Discord non li mostra, riavvia il client Discord (Ctrl+R).
+
+## Sintesi vocale e frasi sui pad
+
+- **Al volo**: scrivi nella barra 💬 sotto i pad e premi **Invio** (o **Parla**). La frase passa dal canale *Soundboard* del mixer, quindi arriva a Discord (cavo virtuale o bot) e in cuffia come un suono. Invio di nuovo la ripete.
+- **Sui pad**: tasto destro su un pad vuoto → **Nuova frase…**, oppure **Salva su un pad** dalla barra. Tasto destro sulla frase → *Modifica frase…* per cambiare testo o voce, *Personalizza…* per nome, colore, emoji, immagine, volume, scorciatoia e nota MIDI. Le frasi stanno anche nella libreria (💬) e si trascinano tra pad e pagine come i file.
+- **Da Discord**: `/parla testo:`; le frasi sui pad compaiono nella pulsantiera e in `/suona`. **Dal telefono**: campo «Scrivi una frase da far dire…» nella scheda Pad.
+
+**Impostazioni → Sintesi vocale**: motore, voce predefinita, velocità, tono e un campo di prova che senti solo in cuffia.
+
+| Motore | Pro | Contro |
+|--------|-----|--------|
+| **Voci neurali Microsoft** (predefinito, voce Diego) | Molto naturali, decine di lingue e voci | Serve Internet; usa il servizio delle voci di Microsoft Edge tramite [edge-tts](https://github.com/rany2/edge-tts), non ufficiale: potrebbe cambiare |
+| **Voci del sistema** | Offline, istantanee | Meno naturali; su Windows quelle installate (es. *Microsoft Elsa* per l'italiano), su Linux serve `espeak-ng` |
+
+Ogni frase viene creata una volta sola e tenuta in una cache (`%APPDATA%\SoundboardVST\cache\tts`, massimo 200 MB): dalla seconda volta parte subito, e le frasi sui pad vengono preparate all'avvio. Cambiando voce, velocità o tono la frase viene ricreata.
 
 ## MIDI
 
@@ -279,6 +296,7 @@ src/soundboard_vst/
   audio/pitch.py         pitch shifter a bassa latenza
   discord_bot.py         bot Discord (discord.py) che trasmette il canale Soundboard
   discord_commands.py    comandi slash, pulsantiera e canale dedicato del bot
+  tts.py                 sintesi vocale (voci neurali e di sistema), cache delle frasi
   audio/engine.py        motore audio: stream, mix, routing
   audio/mixer.py         canale del mixer (inserti, fader, mute, meter)
   audio/plugins.py       inserti: effetti integrati e VST3
@@ -304,4 +322,4 @@ esistente: *Actions → Build release → Run workflow* e indica il tag.
 [pedalboard](https://github.com/spotify/pedalboard) (VST3, effetti, decodifica audio), [NumPy](https://numpy.org/),
 [python-rtmidi](https://github.com/SpotlightKid/python-rtmidi) (MIDI), [discord.py](https://github.com/Rapptz/discord.py) (bot Discord),
 [yt-dlp](https://github.com/yt-dlp/yt-dlp) con [Deno](https://deno.com) (YouTube), [aiohttp](https://docs.aiohttp.org) e
-[segno](https://github.com/heuer/segno) (controllo remoto e QR code), [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg) (ffmpeg per la decodifica).
+[segno](https://github.com/heuer/segno) (controllo remoto e QR code), [edge-tts](https://github.com/rany2/edge-tts) (voci neurali), [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg) (ffmpeg per la decodifica).

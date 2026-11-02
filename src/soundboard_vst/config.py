@@ -90,7 +90,15 @@ DEFAULTS: dict[str, Any] = {
         "board_channel": 0,          # canale dedicato alla pulsantiera (ID), 0 = nessuno
         "board_messages": [],        # messaggi della pulsantiera in quel canale
     },
-    "sounds": {},                # nome file -> {"volume": float, "shortcut": str}
+    "tts": {                     # sintesi vocale
+        "engine": "edge",        # "edge" (voci neurali Microsoft, online) o "system" (voci del sistema)
+        "edge_voice": "it-IT-DiegoNeural",
+        "system_voice": "",      # vuoto = voce predefinita del sistema
+        "rate": 0,               # velocità in %, da -50 a +100
+        "pitch": 0,              # tono in Hz, da -50 a +50 (solo voci neurali)
+    },
+    "phrases": {},               # "tts:<id>" -> {"text", "engine", "voice"}: frasi sui pad
+    "sounds": {},                # nome file (o "tts:<id>") -> {"volume", "shortcut", "label", ...}
     "mixer": {},                 # id canale -> stato (fader, mute, inserti...)
     "window": {},
 }

@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.7.0 — 2026-11-02
+
+### Novità
+- **Sintesi vocale (text to speech)**: nella barra 💬 sotto i pad scrivi una frase e premi Invio: la soundboard la
+  dice, sul canale Soundboard del mixer (quindi a Discord tramite cavo virtuale o bot, e in cuffia).
+- **Frasi sui pad**: tasto destro su un pad vuoto → *Nuova frase…* (o «Salva su un pad» dalla barra). Le frasi si
+  comportano come gli altri suoni: nome, colore, emoji, immagine, volume, scorciatoia, nota MIDI, spostamento tra
+  pad e pagine, libreria, telefono, pulsantiera e `/suona` su Discord. Ogni frase può avere la sua voce.
+- Due motori: **voci neurali Microsoft** (online, molto naturali, tante lingue; predefinita Diego, italiano) e
+  **voci del sistema** (offline: SAPI su Windows, `say` su macOS, espeak-ng su Linux).
+- Nuova scheda **Impostazioni → Sintesi vocale**: motore, voce predefinita, velocità, tono e prova in cuffia.
+- Le frasi vengono create una volta sola e tenute in una cache (fino a 200 MB): la seconda volta partono subito,
+  e quelle sui pad vengono preparate all'avvio.
+- Discord: comando **`/parla testo:`** (stesso permesso di «Chi può suonare»).
+- Telefono: campo «Scrivi una frase da far dire…» nella scheda Pad.
+
 ## v0.6.2 — 2026-11-02
 
 ### Correzioni

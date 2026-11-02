@@ -83,6 +83,10 @@ input[type=text]{flex:1;font:inherit;color:var(--text);background:var(--panel2);
   <section id="pads" class="sel">
     <div class="pages" id="pages"></div>
     <div class="grid" id="grid"></div>
+    <div class="row" style="margin-top:10px">
+      <input type="text" id="saytext" placeholder="💬 Scrivi una frase da far dire…" maxlength="300" enterkeyhint="send" style="flex:1">
+      <button id="saybtn">Parla</button>
+    </div>
   </section>
   <section id="player">
     <div class="card">
@@ -163,6 +167,10 @@ $("#pvol").onchange = () => dragging.player = false;
 function addTrack(){ const t = $("#addtext").value.trim(); if (!t) return;
   $("#addmsg").textContent = "Invio…"; send({cmd:"player_add", text:t}); $("#addtext").value = ""; }
 $("#addbtn").onclick = addTrack;
+function say(){ const t = $("#saytext").value.trim(); if (!t) return;
+  send({cmd:"say", text:t}); $("#saytext").select(); }
+$("#saybtn").onclick = say;
+$("#saytext").onkeydown = e => { if (e.key === "Enter") say(); };
 $("#addtext").onkeydown = e => { if (e.key === "Enter") addTrack(); };
 
 function renderPads(){

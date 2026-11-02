@@ -437,6 +437,15 @@ class Commands:
             cmds.bot.send_command({"cmd": "stop_sounds"})
             await cmds._reply(interaction, "■ Suoni fermati.")
 
+        @tree.command(name="parla", description="Fa dire una frase alla sintesi vocale della soundboard")
+        @app_commands.describe(testo="La frase da dire (fino a 300 caratteri)")
+        @needs("sounds_access")
+        async def parla(interaction, testo: app_commands.Range[str, 1, 300]):
+            cmds.bot.send_command({"cmd": "say", "text": testo})
+            note = "" if interaction.guild is None or cmds._in_voice(interaction.guild) else \
+                " (il bot non è in un canale vocale: usa /entra)"
+            await cmds._reply(interaction, f"💬 {testo[:200]}{note}")
+
         @tree.command(name="pulsantiera", description="Mostra i pad della soundboard come pulsanti")
         @app_commands.describe(pagina="Pagina dei pad da mostrare (da 1)",
                                privata="Visibile solo a te (predefinito: visibile a tutti nel canale)")
@@ -517,7 +526,8 @@ class Commands:
         async def aiuto(interaction):
             await cmds._reply(interaction, (
                 "**Suoni**\n"
-                "`/suona` riproduce un suono · `/stop` ferma tutto · `/pulsantiera` pad come pulsanti\n"
+                "`/suona` riproduce un suono · `/parla` sintesi vocale · `/stop` ferma tutto · "
+                "`/pulsantiera` pad come pulsanti\n"
                 "**Controllo**\n"
                 "`/entra` · `/esci` · `/player` · `/riproduci` (YouTube) · `/volume`\n"
                 "`/canale-pulsantiera` tiene tutti i pad in un canale dedicato"))

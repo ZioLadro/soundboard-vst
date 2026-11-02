@@ -143,8 +143,10 @@ def cmds():
 
 def test_slash_commands_build_valid_payloads(cmds):
     payloads = {c.name: c.to_dict(cmds.tree) for c in cmds.tree.get_commands()}
-    assert set(payloads) == {"suona", "stop", "pulsantiera", "canale-pulsantiera", "entra", "esci",
+    assert set(payloads) == {"suona", "parla", "stop", "pulsantiera", "canale-pulsantiera", "entra", "esci",
                              "player", "riproduci", "volume", "aiuto"}
+    parla = payloads["parla"]["options"][0]
+    assert parla["required"] and parla["max_length"] == 300
     for p in payloads.values():
         assert re.fullmatch(r"[-_\w]{1,32}", p["name"]) and 1 <= len(p["description"]) <= 100
     suona = payloads["suona"]["options"][0]

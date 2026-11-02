@@ -10,3 +10,4 @@ yt-dlp[default]>=2026.10.26
 imageio-ffmpeg>=0.6
 deno>=2.0
 segno>=1.6
+edge-tts>=7.0

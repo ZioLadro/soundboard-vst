@@ -1,4 +1,4 @@
 """Soundboard VST: soundboard stile Discord con mixer e host VST3."""
 
-__version__ = "0.6.2"
+__version__ = "0.7.0"
 APP_NAME = "Soundboard VST"
