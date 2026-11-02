@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "soundboard-vst"
-version = "0.6.1"
+version = "0.6.2"
 description = "Soundboard stile Discord con mixer, host VST3 e uscita verso un microfono virtuale"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -15,6 +15,7 @@ dependencies = [
     "numpy>=1.26",
     "python-rtmidi>=1.5.8; platform_system != 'Linux' and python_version < '3.13'",
     "discord.py[voice]>=2.7.1",
+    "davey>=0.1.7,<0.2",         # 0.2 non compatibile con discord.py 2.7.1 (bot muto)
     "yt-dlp[default]>=2026.10.26",
     "imageio-ffmpeg>=0.6",
     "deno>=2.0",

@@ -52,6 +52,45 @@ def unavailable_reason() -> str:
     return _error or ""
 
 
+DAVE_INCOMPATIBLE = ("La libreria della crittografia vocale (davey) installata è più recente di quella supportata "
+                     "da discord.py: il bot sembrerebbe parlare ma nessuno lo sentirebbe. Aggiorna la soundboard "
+                     "o, da sorgente, esegui: pip install \"davey<0.2\".")
+
+
+def _code_names(obj, seen=None) -> set[str]:
+    """Nomi usati dal codice di un modulo o di una classe (anche nelle funzioni annidate)."""
+    seen = set() if seen is None else seen
+    names: set[str] = set()
+    stack = []
+    for value in vars(obj).values():
+        func = getattr(value, "__func__", value)
+        if hasattr(func, "__code__"):
+            stack.append(func.__code__)
+        elif isinstance(value, type) and value.__module__ == getattr(obj, "__name__", None) and value not in seen:
+            seen.add(value)
+            names |= _code_names(value, seen)
+    while stack:
+        code = stack.pop()
+        names.update(code.co_names)
+        stack.extend(c for c in code.co_consts if hasattr(c, "co_names"))
+    return names
+
+
+def dave_compatible(davey_mod=None, gateway_mod=None) -> bool:
+    """davey 0.2 vuole che chi lo usa chiami ``prepare_transition``/``execute_transition`` dopo ogni
+    commit: se discord.py non lo fa, la voce è cifrata senza chiave valida e il bot è muto."""
+    try:
+        if davey_mod is None:
+            import davey as davey_mod
+        if gateway_mod is None:
+            from discord import gateway as gateway_mod
+    except Exception:
+        return True                       # senza davey/discord.py il problema è un altro
+    if not hasattr(davey_mod.DaveSession, "prepare_transition"):
+        return True                       # davey 0.1.x: il comportamento che discord.py si aspetta
+    return "prepare_transition" in _code_names(gateway_mod)
+
+
 def application_id_from_token(token: str) -> int | None:
     """La prima parte del token di un bot è l'ID del bot (che coincide con l'ID dell'applicazione)."""
     try:
@@ -222,6 +261,7 @@ class DiscordBot:
         self._thread: threading.Thread | None = None
         self._source: SoundboardSource | None = None
         self._vc = None
+        self.dave_ok = True             # davey compatibile con discord.py (vedi dave_compatible)
         self.continuous = True          # trasmissione continua: latenza minima
         self.last_latency_ms: float | None = None
         self.status = BotStatus()
@@ -251,7 +291,9 @@ class DiscordBot:
             self.stop()
         self.owner_id, self.follow = owner_id, follow
         self.application_id = application_id_from_token(token)
-        self._set_status(online=False, channel="", message="Connessione a Discord…")
+        self.dave_ok = dave_compatible()
+        self._set_status(online=False, channel="", message="Connessione a Discord…"
+                         if self.dave_ok else DAVE_INCOMPATIBLE)
 
         intents = discord.Intents.none()
         intents.guilds = True
@@ -266,7 +308,8 @@ class DiscordBot:
         @client.event
         async def on_ready():
             bot.application_id = client.application_id or bot.application_id
-            bot._set_status(online=True, message=f"Online come {client.user}")
+            bot._set_status(online=True, message=f"Online come {client.user}" if bot.dave_ok
+                            else DAVE_INCOMPATIBLE)
             if bot.follow:
                 await bot._join_owner()
             # on_ready si ripete dopo ogni riconnessione: i comandi si registrano una volta sola
