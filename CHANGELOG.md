@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.1 — 2026-11-02
+
+### Correzioni
+- Se lo stesso bot (stesso token) è usato da un'altra soundboard, il bot non viene più conteso tra le due:
+  la seconda soundboard non lo sposta e mostra l'avviso «Bot già in uso» con la spiegazione.
+- README: come usare la soundboard in più persone (un bot per ciascuno).
+
 ## v0.3.0 — 2026-11-02
 
 ### Novità

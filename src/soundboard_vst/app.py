@@ -117,6 +117,7 @@ class MainWindow(QMainWindow):
         if errors:
             QTimer.singleShot(300, lambda: QMessageBox.warning(
                 self, "Plugin non caricati", "Alcuni inserti non sono stati ripristinati:\n\n" + "\n".join(errors)))
+        self._bot_conflict_shown = False
         self.bot_signals = BotSignals()
         self.bot_signals.status.connect(self._on_bot_status)
         self.bot = DiscordBot(self.engine, self.bot_signals.status.emit)
@@ -260,8 +261,15 @@ class MainWindow(QMainWindow):
             text = "🤖  Connessione…"
         else:
             text = "🤖  Bot spento"
+        if st.conflict:
+            text = "🤖  Bot già in uso"
         self.bot_btn.setText(text)
         self.bot_btn.setToolTip(st.message)
+        if st.conflict and not self._bot_conflict_shown:
+            self._bot_conflict_shown = True
+            QMessageBox.warning(self, "Bot già in uso", st.message)
+        elif not st.conflict:
+            self._bot_conflict_shown = False
         self.statusBar().showMessage(f"Bot: {st.message}", 6000)
         self._update_exclusive()
 

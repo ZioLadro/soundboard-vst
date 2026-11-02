@@ -68,3 +68,29 @@ def test_engine_feeds_bot_and_can_remove_sounds_from_cable():
     assert len(eng.bot_ring) == 512
     assert not master.any() and monitor.any()        # i suoni vanno solo al bot (e in cuffia)
     assert eng.has_active_sounds()
+
+
+def test_does_not_steal_bot_used_by_another_soundboard():
+    import asyncio
+    from soundboard_vst.discord_bot import DiscordBot, used_elsewhere
+
+    other = SimpleNamespace(name="Gaming")
+    target = SimpleNamespace(name="Generale")
+    connects = []
+
+    async def connect(**kw):
+        connects.append(kw)
+
+    target.connect = connect
+    guild = SimpleNamespace(voice_client=None, me=SimpleNamespace(voice=SimpleNamespace(channel=other)))
+    target.guild = guild
+    assert used_elsewhere(guild) == "Gaming"
+
+    statuses = []
+    bot = DiscordBot(AudioEngine(48000, 512), statuses.append)
+    asyncio.run(bot._connect(target))
+    assert connects == [] and statuses[-1].conflict and "Gaming" in statuses[-1].message
+
+    guild.me.voice = None                           # bot libero: entra normalmente
+    asyncio.run(bot._connect(target))
+    assert len(connects) == 1 and connects[0]["self_deaf"] is True

@@ -131,6 +131,21 @@ class BotStatus:
     online: bool = False
     channel: str = ""          # "Server › canale" se in voce
     message: str = "Bot spento"
+    conflict: bool = False     # lo stesso bot è usato da un'altra soundboard (token condiviso)
+
+CONFLICT_MESSAGE = ("Il bot è già nel canale «{channel}» per un'altra soundboard. Un bot può stare in un "
+                    "solo canale alla volta: se più persone usano la soundboard, ognuno deve creare il "
+                    "proprio bot con il proprio token.")
+
+
+def used_elsewhere(guild) -> str | None:
+    """Se il bot è in voce in questo server ma non tramite questa soundboard, restituisce il canale."""
+    me = getattr(guild, "me", None)
+    voice = getattr(me, "voice", None) if me is not None else None
+    channel = getattr(voice, "channel", None) if voice is not None else None
+    if channel is not None and getattr(guild, "voice_client", None) is None:
+        return channel.name
+    return None
 
 
 class DiscordBot:
@@ -190,12 +205,20 @@ class DiscordBot:
         @client.event
         async def on_voice_state_update(member, before, after):
             if member.id == client.user.id:
+                guild = (after.channel or before.channel).guild
+                if guild.voice_client is None:
+                    # il bot si è mosso ma non per noi: è un'altra soundboard con lo stesso token
+                    if after.channel is not None:
+                        bot._stop_streaming()
+                        bot._set_status(channel="", conflict=True,
+                                        message=CONFLICT_MESSAGE.format(channel=after.channel.name))
+                    return
                 if after.channel is None:
                     bot._stop_streaming()
                     bot._set_status(channel="", message=f"Online come {client.user}")
                 else:
                     bot._set_status(channel=f"{after.channel.guild.name} › {after.channel.name}",
-                                    message=f"Nel canale {after.channel.name}")
+                                    conflict=False, message=f"Nel canale {after.channel.name}")
                 return
             if member.id != bot.owner_id or not bot.follow:
                 return
@@ -271,6 +294,10 @@ class DiscordBot:
         await self._connect(ch)
 
     async def _connect(self, channel) -> None:
+        busy = used_elsewhere(channel.guild)
+        if busy is not None:
+            self._set_status(conflict=True, message=CONFLICT_MESSAGE.format(channel=busy))
+            return
         try:
             vc = channel.guild.voice_client
             if vc is not None and vc.is_connected():

@@ -107,6 +107,12 @@ Discord normale, e per i suoni non serve il cavo virtuale.
 4. Dal pulsante 🤖 in alto avvia il bot. Con «Segui me» attivo entra nel tuo canale, ti segue quando cambi
    canale ed esce quando esci; altrimenti usa **Entra nel mio canale**.
 
+**Più persone con la soundboard**: ognuno deve creare il **proprio bot** con il proprio token (passi 1–3).
+Un bot è un solo account Discord: può stare in un solo canale vocale per server e trasmettere un solo
+flusso audio, quindi due soundboard con lo stesso token se lo contenderebbero. Con un bot a testa,
+entrambi i bot entrano nello stesso canale e ognuno riproduce i suoni del proprio utente. Se la
+soundboard trova il bot già occupato da un'altra soundboard, non lo «ruba» e mostra un avviso.
+
 Note:
 - Il bot trasmette il canale **Soundboard** del mixer (inserti e fader compresi), non il microfono; l'anteprima di MyInstants resta solo in cuffia.
 - Con «Con il bot in canale, i suoni non passano dal microfono virtuale» (attivo di default) il canale non sente i suoni due volte.
