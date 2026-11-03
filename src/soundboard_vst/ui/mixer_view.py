@@ -7,7 +7,7 @@ from typing import Callable
 
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QListWidget,
+    QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QListWidget,
     QListWidgetItem, QMenu, QMessageBox, QPushButton, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -267,9 +267,15 @@ class MixerView(QWidget):
     changed = Signal()
 
     def __init__(self, engine: AudioEngine, vst_list: Callable[[], list[Path]],
-                 rescan: Callable[[], None], parent=None):
+                 rescan: Callable[[], None], parent=None, inputs: Callable[[], list[str]] = list,
+                 current_input: Callable[[], str] = str, set_input: Callable[[str], None] | None = None,
+                 on_mic_to_bot: Callable[[bool], None] | None = None):
+        """``inputs()``/``current_input()``/``set_input(nome)``: scelta dell'ingresso del canale Microfono;
+        ``on_mic_to_bot(attivo)``: avvisa quando il microfono viene mandato (o non più) al bot."""
         super().__init__(parent)
         self.engine = engine
+        self._inputs, self._current_input = inputs, current_input
+        self._set_input, self._on_mic_to_bot = set_input, on_mic_to_bot
         self.strips: list[StripWidget] = []
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
@@ -281,6 +287,67 @@ class MixerView(QWidget):
             row.addWidget(w)
             if strip is engine.monitor:
                 self._add_monitor_options(w)
+            if strip is engine.mic:
+                self._add_mic_options(w)
+
+    def _add_mic_options(self, w: StripWidget) -> None:
+        label = QLabel("INGRESSO")
+        label.setObjectName("sectionTitle")
+        self.input_combo = QComboBox()
+        self.input_combo.setToolTip("Microfono o scheda audio di questo canale (l'audio si riavvia per un attimo)")
+        self.input_combo.setMinimumContentsLength(10)
+        self.input_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.input_combo.activated.connect(self._input_chosen)
+        refresh = QToolButton(text="↻")
+        refresh.setObjectName("small")
+        refresh.setToolTip("Aggiorna l'elenco dei dispositivi")
+        refresh.clicked.connect(self.refresh_inputs)
+        row = QHBoxLayout()
+        row.setSpacing(4)
+        row.addWidget(self.input_combo, 1)
+        row.addWidget(refresh)
+        self.mic_to_bot = QCheckBox("Anche al bot Discord")
+        self.mic_to_bot.setToolTip(
+            "La tua voce (con gli inserti di questo canale) arriva anche dal bot.\n"
+            "Utile per far parlare il bot (es. con il pitch shifter); se parli anche dal tuo Discord,\n"
+            "chi ascolta ti sente due volte: in quel caso muta uno dei due.")
+        self.mic_to_bot.setChecked(self.engine.mic_to_bot)
+        self.mic_to_bot.toggled.connect(self._mic_to_bot_toggled)
+        w.extra.addWidget(label)
+        w.extra.addLayout(row)
+        w.extra.addWidget(self.mic_to_bot)
+        self.refresh_inputs()
+
+    def refresh_inputs(self) -> None:
+        if not hasattr(self, "input_combo"):
+            return
+        try:
+            names = list(self._inputs())
+        except Exception:
+            names = []
+        current = self._current_input() or ""
+        self.input_combo.blockSignals(True)
+        self.input_combo.clear()
+        self.input_combo.addItem("— nessuno —", "")
+        for n in names:
+            self.input_combo.addItem(n, n)
+        if current and current not in names:
+            self.input_combo.addItem(f"{current} (non trovato)", current)
+        self.input_combo.setCurrentIndex(max(0, self.input_combo.findData(current)))
+        self.input_combo.setToolTip(current or "Nessun ingresso")
+        self.input_combo.blockSignals(False)
+
+    def _input_chosen(self, index: int) -> None:
+        name = self.input_combo.itemData(index) or ""
+        if self._set_input is not None and name != (self._current_input() or ""):
+            self._set_input(name)
+        self.input_combo.setToolTip(name or "Nessun ingresso")
+
+    def _mic_to_bot_toggled(self, on: bool) -> None:
+        self.engine.mic_to_bot = on
+        if self._on_mic_to_bot is not None:
+            self._on_mic_to_bot(on)
+        self.changed.emit()
 
     def _add_monitor_options(self, w: StripWidget) -> None:
         label = QLabel("ASCOLTA")
@@ -311,6 +378,11 @@ class MixerView(QWidget):
 
     def sync_from_model(self) -> None:
         self.hear_tts.setChecked(self.engine.monitor_hear_tts)
+        if hasattr(self, "mic_to_bot"):
+            self.mic_to_bot.blockSignals(True)
+            self.mic_to_bot.setChecked(self.engine.mic_to_bot)
+            self.mic_to_bot.blockSignals(False)
+            self.refresh_inputs()
         for w in self.strips:
             w.sync_from_model()
         self.hear_sounds.setChecked(self.engine.monitor_hear_sounds)

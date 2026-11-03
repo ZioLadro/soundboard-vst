@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import secrets
 import os
 import sys
 from dataclasses import dataclass
@@ -95,6 +96,7 @@ class InsertSlot:
         self.path = path              # per i VST3
         self.plugin_name = plugin_name
         self.bypass = bypass
+        self.uid = secrets.token_hex(4)   # identificativo stabile (mappa MIDI dei parametri)
         self.failed = False           # disattivato dopo un errore in elaborazione
         self._fifo: np.ndarray | None = None
 
@@ -113,6 +115,44 @@ class InsertSlot:
         if self.kind == "builtin":
             return BUILTIN_EFFECTS.get(self.type_name, ("", []))[1]
         return []
+
+    # Parametri come valori 0..1 (per i controlli MIDI) -------------------------------------
+    def param_label(self, name: str) -> str:
+        if self.kind == "builtin":
+            spec = next((s for s in self.param_specs() if s.attr == name), None)
+            return spec.label if spec else name
+        param = getattr(self.plugin, "parameters", {}).get(name)
+        return getattr(param, "name", name) if param is not None else name
+
+    def get_normalized(self, name: str) -> float | None:
+        try:
+            if self.kind == "builtin":
+                spec = next((s for s in self.param_specs() if s.attr == name), None)
+                if spec is None:
+                    return None
+                return (float(getattr(self.plugin, name)) - spec.minimum) / (spec.maximum - spec.minimum)
+            param = self.plugin.parameters.get(name)
+            return None if param is None else float(param.raw_value)
+        except Exception:
+            return None
+
+    def set_normalized(self, name: str, value: float) -> bool:
+        """Imposta un parametro da 0..1 (0 = minimo, 1 = massimo); False se non esiste."""
+        value = max(0.0, min(1.0, float(value)))
+        try:
+            if self.kind == "builtin":
+                spec = next((s for s in self.param_specs() if s.attr == name), None)
+                if spec is None:
+                    return False
+                setattr(self.plugin, name, spec.minimum + value * (spec.maximum - spec.minimum))
+                return True
+            param = self.plugin.parameters.get(name)
+            if param is None:
+                return False
+            param.raw_value = value
+            return True
+        except Exception:
+            return False
 
     # Elaborazione ------------------------------------------------------------
     def process(self, block: np.ndarray, sample_rate: int) -> np.ndarray:
@@ -141,7 +181,7 @@ class InsertSlot:
 
     # Salvataggio ---------------------------------------------------------------
     def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {"kind": self.kind, "bypass": self.bypass}
+        d: dict[str, Any] = {"kind": self.kind, "bypass": self.bypass, "uid": self.uid}
         if self.kind == "builtin":
             d["type"] = self.type_name
             d["params"] = {s.attr: float(getattr(self.plugin, s.attr)) for s in self.param_specs()}
@@ -180,6 +220,8 @@ class InsertSlot:
                         except Exception:
                             pass
         slot.bypass = bool(d.get("bypass", False))
+        if isinstance(d.get("uid"), str) and d["uid"]:
+            slot.uid = d["uid"]
         return slot
 
 

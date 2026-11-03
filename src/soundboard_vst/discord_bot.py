@@ -110,9 +110,13 @@ def presence_text(state: dict) -> str | None:
 
 
 # Suoni di entrata e uscita -----------------------------------------------------------------------
+GREETING_EVENTS = ("join", "leave", "mute", "unmute")   # entra, esce, si muta, si smuta
+
+
 def default_greetings() -> dict:
-    return {"enabled": True, "cooldown": 30, "users": {}, "default": {"join": "", "leave": ""},
-            "announce": {"enabled": False, "join": "{nome} è entrato", "leave": "{nome} è uscito"}}
+    return {"enabled": True, "cooldown": 30, "users": {}, "default": {e: "" for e in GREETING_EVENTS},
+            "announce": {"enabled": False, "join": "{nome} è entrato", "leave": "{nome} è uscito",
+                         "mute": "", "unmute": ""}}
 
 
 def normalize_greetings(g: dict | None) -> dict:
@@ -126,15 +130,24 @@ def normalize_greetings(g: dict | None) -> dict:
         pass
     for uid, u in (g.get("users") or {}).items():
         if isinstance(u, dict) and str(uid).strip():
-            out["users"][str(uid)] = {"name": str(u.get("name", "")), "join": str(u.get("join") or ""),
-                                      "leave": str(u.get("leave") or "")}
+            out["users"][str(uid)] = {"name": str(u.get("name", "")),
+                                      **{e: str(u.get(e) or "") for e in GREETING_EVENTS}}
     d = g.get("default") or {}
-    out["default"] = {"join": str(d.get("join") or ""), "leave": str(d.get("leave") or "")}
+    out["default"] = {e: str(d.get(e) or "") for e in GREETING_EVENTS}
     a = g.get("announce") or {}
-    out["announce"] = {"enabled": bool(a.get("enabled", False)),
-                       "join": str(a.get("join") or out["announce"]["join"]),
-                       "leave": str(a.get("leave") or out["announce"]["leave"])}
+    ann = {"enabled": bool(a.get("enabled", False))}
+    for e in GREETING_EVENTS:
+        # entrata/uscita hanno un testo predefinito; muto/smuto restano vuoti finché non li scrivi
+        ann[e] = str(a[e]) if isinstance(a.get(e), str) else out["announce"][e]
+        if e in ("join", "leave") and not ann[e]:
+            ann[e] = out["announce"][e]
+    out["announce"] = ann
     return out
+
+
+def _muted(state) -> bool:
+    """Microfono spento (da sé o dal server); chi si silenzia le cuffie è anche muto."""
+    return any(bool(getattr(state, a, False)) for a in ("self_mute", "mute", "self_deaf", "deaf"))
 
 
 def greeting_action(greetings: dict, user_id: int, name: str, event: str) -> dict | None:
@@ -431,7 +444,7 @@ class DiscordBot:
                 else:
                     bot._set_status(channel=f"{after.channel.guild.name} › {after.channel.name}",
                                     conflict=False, message=f"Nel canale {after.channel.name}")
-                    if bot.continuous and before.channel is None:
+                    if (bot.continuous or bot.engine.mic_to_bot) and before.channel is None:
                         await asyncio.sleep(0.5)          # attende che la connessione voce sia pronta
                         await bot._start_playing()
                 return
@@ -524,16 +537,23 @@ class DiscordBot:
         self.remember_user(member)
         vc = getattr(member.guild, "voice_client", None)
         channel = getattr(vc, "channel", None) if vc is not None and vc.is_connected() else None
-        if channel is None or before.channel == after.channel:
-            return
-        if after.channel == channel:
-            event, verb = "join", "è entrato in"
-        elif before.channel == channel:
-            event, verb = "leave", "è uscito da"
-        else:
+        if channel is None:
             return
         name = member.display_name
-        eventlog.log(eventlog.DISCORD, f"{name} {verb} #{channel.name}", "Bot")
+        if before.channel == after.channel:
+            if after.channel != channel or _muted(before) == _muted(after):
+                return                              # altro canale, o è cambiato altro (video, stream…)
+            event = "mute" if _muted(after) else "unmute"
+            eventlog.log(eventlog.DISCORD, f"{name} {'si è mutato' if event == 'mute' else 'ha riattivato il microfono'}"
+                         f" in #{channel.name}", "Bot")
+        elif after.channel == channel:
+            event = "join"
+            eventlog.log(eventlog.DISCORD, f"{name} è entrato in #{channel.name}", "Bot")
+        elif before.channel == channel:
+            event = "leave"
+            eventlog.log(eventlog.DISCORD, f"{name} è uscito da #{channel.name}", "Bot")
+        else:
+            return
         now = time.monotonic()
         key = (member.id, event)
         if now - self._greeted.get(key, -1e9) < self.greetings.get("cooldown", 30):
@@ -541,7 +561,8 @@ class DiscordBot:
         action = greeting_action(self.greetings, member.id, name, event)
         if action is not None:
             self._greeted[key] = now
-            self.send_command({**action, "by": f"{name} ({'entrata' if event == 'join' else 'uscita'})"})
+            what = {"join": "entrata", "leave": "uscita", "mute": "muto", "unmute": "smuto"}[event]
+            self.send_command({**action, "by": f"{name} ({what})"})
 
     # Stato su Discord ---------------------------------------------------------------------------
     def _start_presence_loop(self) -> None:
@@ -660,7 +681,8 @@ class DiscordBot:
             self._vc = vc
             return
         source = SoundboardSource(self.engine.bot_ring, lambda: self.engine.sample_rate, self.engine.has_active_sounds,
-                                  is_continuous=lambda: self.continuous, on_idle=self._on_idle,
+                                  is_continuous=lambda: self.continuous or self.engine.mic_to_bot,
+                                  on_idle=self._on_idle,
                                   on_latency=self._on_latency)
         source.mark(t0)
         self._source, self._vc = source, vc

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QHeaderView, QLabel,
+    QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QPushButton, QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout,
     QWidget,
 )
 
-from ..discord_bot import normalize_greetings
+from ..discord_bot import GREETING_EVENTS, normalize_greetings
 from ..discord_commands import GROUPS, normalize_permissions
 from . import theme
 
@@ -202,7 +202,7 @@ class GreetingsEditor(QWidget):
         g = normalize_greetings(greetings)
         self.sounds = sounds
         self.users = dict(directory.get("users", {}))
-        self.enabled = QCheckBox("Suona quando qualcuno entra o esce dal canale vocale del bot")
+        self.enabled = QCheckBox("Suona quando qualcuno entra, esce, si muta o si smuta nel canale vocale del bot")
         self.enabled.setChecked(g["enabled"])
         self.cooldown = QSpinBox()
         self.cooldown.setRange(0, 3600)
@@ -213,36 +213,38 @@ class GreetingsEditor(QWidget):
         crow.addWidget(QLabel("Non ripetere per la stessa persona prima di"))
         crow.addWidget(self.cooldown)
         crow.addStretch(1)
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Persona", "Quando entra", "Quando esce", ""])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["Persona", "Entra", "Esce", "Si muta", "Si smuta", ""])
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setDefaultSectionSize(34)
         hdr = self.table.horizontalHeader()
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        for col in range(5):
+            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         self.table.setMinimumHeight(200)
-        self._add_row(self.DEFAULT_ROW, "Chiunque altro", g["default"]["join"], g["default"]["leave"])
+        self._add_row(self.DEFAULT_ROW, "Chiunque altro", *(g["default"][e] for e in GREETING_EVENTS))
         for uid, u in g["users"].items():
-            self._add_row(uid, u.get("name") or self.users.get(uid, ""), u["join"], u["leave"])
+            self._add_row(uid, u.get("name") or self.users.get(uid, ""), *(u[e] for e in GREETING_EVENTS))
         add = QPushButton("Aggiungi persone…")
         add.clicked.connect(self._add_people)
         self.announce = QCheckBox("Se non c'è un suono, annuncia con la sintesi vocale")
         self.announce.setChecked(g["announce"]["enabled"])
-        self.join_text = QLineEdit(g["announce"]["join"])
-        self.leave_text = QLineEdit(g["announce"]["leave"])
-        for e in (self.join_text, self.leave_text):
-            e.setPlaceholderText("{nome} = nome della persona")
-        arow = QHBoxLayout()
-        arow.addWidget(QLabel("Entrata"))
-        arow.addWidget(self.join_text, 1)
-        arow.addWidget(QLabel("Uscita"))
-        arow.addWidget(self.leave_text, 1)
+        self.texts: dict[str, QLineEdit] = {}
+        arow = QGridLayout()
+        for i, (event, label) in enumerate(zip(GREETING_EVENTS, ("Entrata", "Uscita", "Muto", "Smuto"))):
+            edit = QLineEdit(g["announce"][event])
+            edit.setPlaceholderText("{nome} = nome della persona" if event in ("join", "leave")
+                                    else "vuoto = nessun annuncio, es. «{nome} si è mutato»")
+            self.texts[event] = edit
+            arow.addWidget(QLabel(label), i // 2, (i % 2) * 2)
+            arow.addWidget(edit, i // 2, (i % 2) * 2 + 1)
+        arow.setColumnStretch(1, 1)
+        arow.setColumnStretch(3, 1)
+        self.join_text, self.leave_text = self.texts["join"], self.texts["leave"]
         hint = QLabel("Ognuno può scegliere i propri suoni da Discord con <b>/mio-suono</b>. Funziona nel canale "
-                      "vocale in cui si trova il bot.")
+                      "vocale in cui si trova il bot. «Si muta» vale anche per chi silenzia le cuffie.")
         hint.setWordWrap(True)
         hint.setTextFormat(Qt.TextFormat.RichText)
         hint.setStyleSheet(f"color: {theme.MUTED};")
@@ -268,7 +270,7 @@ class GreetingsEditor(QWidget):
         c.setCurrentIndex(idx)
         return c
 
-    def _add_row(self, uid: str, name: str, join: str, leave: str) -> None:
+    def _add_row(self, uid: str, name: str, join: str, leave: str, mute: str = "", unmute: str = "") -> None:
         row = self.table.rowCount()
         self.table.insertRow(row)
         label = name if uid == self.DEFAULT_ROW else f"{name or 'Utente'}  ·  {uid}"
@@ -281,13 +283,13 @@ class GreetingsEditor(QWidget):
             f.setItalic(True)
             item.setFont(f)
         self.table.setItem(row, 0, item)
-        self.table.setCellWidget(row, 1, self._combo(join))
-        self.table.setCellWidget(row, 2, self._combo(leave))
+        for col, key in enumerate((join, leave, mute, unmute), start=1):
+            self.table.setCellWidget(row, col, self._combo(key))
         if uid != self.DEFAULT_ROW:
             rm = QPushButton("✕")
             rm.setToolTip("Togli")
             rm.clicked.connect(lambda _=False, it=item: self.table.removeRow(self.table.row(it)))
-            self.table.setCellWidget(row, 3, rm)
+            self.table.setCellWidget(row, 5, rm)
 
     def _uids(self) -> set[str]:
         return {self.table.item(r, 0).data(ID_ROLE) for r in range(self.table.rowCount())}
@@ -299,19 +301,19 @@ class GreetingsEditor(QWidget):
         if dlg.exec():
             for uid in dlg.values():
                 if uid not in self._uids():
-                    self._add_row(uid, self.users.get(uid, ""), "", "")
+                    self._add_row(uid, self.users.get(uid, ""), "", "", "", "")
 
     def values(self) -> dict:
         out = {"enabled": self.enabled.isChecked(), "cooldown": self.cooldown.value(), "users": {},
-               "default": {"join": "", "leave": ""},
-               "announce": {"enabled": self.announce.isChecked(), "join": self.join_text.text().strip(),
-                            "leave": self.leave_text.text().strip()}}
+               "default": {e: "" for e in GREETING_EVENTS},
+               "announce": {"enabled": self.announce.isChecked(),
+                            **{e: self.texts[e].text().strip() for e in GREETING_EVENTS}}}
         for r in range(self.table.rowCount()):
             item = self.table.item(r, 0)
             uid = item.data(ID_ROLE)
-            join, leave = self.table.cellWidget(r, 1).currentData(), self.table.cellWidget(r, 2).currentData()
+            keys = {e: self.table.cellWidget(r, c).currentData() or "" for c, e in enumerate(GREETING_EVENTS, start=1)}
             if uid == self.DEFAULT_ROW:
-                out["default"] = {"join": join or "", "leave": leave or ""}
+                out["default"] = keys
             else:
-                out["users"][uid] = {"name": item.data(ID_ROLE + 1) or "", "join": join or "", "leave": leave or ""}
+                out["users"][uid] = {"name": item.data(ID_ROLE + 1) or "", **keys}
         return normalize_greetings(out)

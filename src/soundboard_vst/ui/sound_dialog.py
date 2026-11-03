@@ -5,7 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
-    QDoubleSpinBox, QColorDialog, QDialog, QDialogButtonBox, QFileDialog, QMessageBox, QFormLayout, QGridLayout, QHBoxLayout, QKeySequenceEdit,
+    QComboBox, QDoubleSpinBox, QColorDialog, QDialog, QDialogButtonBox, QFileDialog, QMessageBox, QFormLayout, QGridLayout, QHBoxLayout, QKeySequenceEdit,
     QLabel, QLineEdit, QPushButton, QSlider, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -62,7 +62,8 @@ class SoundSettingsDialog(QDialog):
     ``preview(dati, guadagno)``: anteprima in cuffia (con ``dati`` None la ferma)."""
 
     def __init__(self, name: str, settings: dict, bridge: MidiBridge | None = None,
-                 midi_port: str = "", parent=None, audio=None, sample_rate: int = 48000, preview=None):
+                 midi_port: str = "", parent=None, audio=None, sample_rate: int = 48000, preview=None,
+                 categories=()):
         super().__init__(parent)
         self._audio = audio
         self._sr = int(sample_rate)
@@ -79,6 +80,16 @@ class SoundSettingsDialog(QDialog):
         self.label = QLineEdit(settings.get("label", ""))
         self.label.setPlaceholderText(name)
         self.label.setToolTip("Nome mostrato sul pad (il file non viene rinominato). Vuoto = nome del file.")
+
+        # Categoria --------------------------------------------------------------------
+        self.category = QComboBox()
+        self.category.setEditable(True)
+        self.category.addItem("")
+        for c in sorted(set(categories), key=str.lower):
+            self.category.addItem(c)
+        self.category.setCurrentText(settings.get("category", "") or "")
+        self.category.lineEdit().setPlaceholderText("es. Risate, Meme, Musica… (vuoto = nessuna)")
+        self.category.setToolTip("Per raggruppare i suoni nella libreria")
 
         # Immagine ------------------------------------------------------------------
         self.image_preview = QLabel()
@@ -252,6 +263,7 @@ class SoundSettingsDialog(QDialog):
 
         form = QFormLayout()
         form.addRow("Nome sul pad", self.label)
+        form.addRow("Categoria", self.category)
         form.addRow("Immagine", irow)
         form.addRow("Volume", vrow)
         form.addRow("Taglio e\ndissolvenze", shape_box)
@@ -406,5 +418,6 @@ class SoundSettingsDialog(QDialog):
             "color": self.color,
             "emoji": self.emoji.text().strip(),
             "midi": self.midi_binding,
+            "category": " ".join(self.category.currentText().split())[:40],
             **self.shape_values(),
         }

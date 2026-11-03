@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.9.0 — 2026-11-03
+
+### Novità
+- **Categorie dei suoni**: campo «Categoria» in *Personalizza…* (con le categorie esistenti suggerite), anche per
+  più suoni insieme dalla libreria. La libreria raggruppa i suoni per categoria; il menu sopra la ricerca mostra una
+  categoria, i suoni senza categoria o quelli **con una certa emoji**. «Nuova pagina con…» mette una categoria su
+  una pagina di pad. La ricerca (anche `/suona` su Discord) trova i suoni per categoria.
+- **Suoni (o sintesi vocale) quando qualcuno si muta o si smuta** nel canale del bot: per persona o per tutti,
+  oppure un annuncio a scelta; anche da `/mio-suono` (opzioni `muto` e `smuto`).
+- **MIDI sui parametri degli inserti**: pulsante «MIDI» accanto a ogni parametro (effetti integrati e VST3): si
+  assegna un potenziometro, un fader o una nota; le finestre dei parametri seguono i valori dal vivo.
+- **Ingresso del microfono dal mixer**: scelta del dispositivo direttamente sul canale Microfono (anche dalla
+  pagina web).
+- **Microfono al bot Discord**: opzione «Anche al bot Discord» sul canale Microfono (anche dalla pagina web).
+- **Scala in dB sui meter** del mixer, nel programma e nella pagina web.
+- **Icone del player disegnate** invece delle emoji (trasporto, ripeti, casuale, brano in riproduzione, YouTube),
+  nel programma e nella pagina web.
+
 ## v0.8.1 — 2026-11-03
 
 ### Novità
