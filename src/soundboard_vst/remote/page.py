@@ -89,6 +89,12 @@ canvas.vu{width:48px;height:230px}
 .mstrip .db{text-align:center;font:12px ui-monospace,Consolas,monospace;color:var(--muted)}
 .mstrip button.mute{padding:6px 0;font-weight:700;font-size:13px}
 .mstrip button.mute.on{background:var(--danger);color:#fff;border:none}
+.mstrip .btns{display:flex;gap:6px}.mstrip .btns button{flex:1}
+.mstrip button.solo{padding:6px 0;font-weight:700;font-size:13px}
+.mstrip button.solo.on{background:#e8d44d;color:#15171c;border:none}
+.pan{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+.pan input{flex:1;min-width:0;accent-color:var(--accent2)}
+.pan .pv{font:11px ui-monospace,Consolas,monospace;min-width:34px;text-align:right}
 /* Pannello dal basso (aggiungi inserto, parametri) */
 .sheet{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:20;align-items:flex-end;justify-content:center}
 .sheet.open{display:flex}
@@ -278,25 +284,37 @@ const MIN_DB = -60, MAX_DB = 12, VU_MIN = -60, VU_MAX = 6;
 let selected = {}, sheetFor = null;
 const dbToFrac = d => (Math.max(MIN_DB, Math.min(MAX_DB, d)) - MIN_DB) / (MAX_DB - MIN_DB);
 const vuFrac = d => Math.max(0, Math.min(1, (d - VU_MIN) / (VU_MAX - VU_MIN)));
-const HEAR = [["hear_sounds","Suoni"],["hear_tts","Voce"],["hear_player","Player"],["hear_mic","Microfono"]];
+const HEAR = [["hear_sounds","Suoni"],["hear_tts","Voce"],["hear_player","Player"]];
+const fmtPan = v => { v = Math.round(v * 100); return v === 0 ? "C" : v < 0 ? "S " + (-v) : "D " + v; };
+const inputOf = id => (S.inputs || []).find(x => x.id === id);
 
 function buildStrip(s){
   const el = document.createElement("div"); el.className = "mstrip"; el.dataset.id = s.id;
   el.innerHTML = `<div class="mtitle"></div><div class="sect">INSERTI</div><ul class="ins"></ul>
     <div class="itools"><button data-a="add" title="Aggiungi">+</button><button data-a="remove" title="Togli">−</button>
     <button data-a="up" title="Su">▲</button><button data-a="down" title="Giù">▼</button><button data-a="edit" title="Parametri">✎</button></div>
-    ${s.id === "mic" ? `<div class="sect">INGRESSO</div><select class="inp"></select>
+    ${s.input ? `<div class="sect">INGRESSO <span class="chs"></span></div><select class="inp"></select>
       <label class="tobot"><input type="checkbox"> Anche al bot Discord</label>` : ""}
-    ${s.id === "monitor" ? `<div class="sect">ASCOLTA</div><div class="hear">${HEAR.map(([k,l]) => `<label><input type="checkbox" data-h="${k}"> ${l}</label>`).join("")}</div>` : ""}
+    ${s.id === "monitor" ? `<div class="sect">ASCOLTA</div><div class="hear">${HEAR.map(([k,l]) => `<label><input type="checkbox" data-h="${k}"> ${l}</label>`).join("")}${(S.inputs || []).map(i => `<label><input type="checkbox" data-in="${i.id}"> <span></span></label>`).join("")}</div>` : ""}
+    <div class="pan"><span>PAN</span><input type="range" min="-100" max="100" step="1" value="0"><span class="pv">C</span></div>
     <div class="fm"><div class="fader"><div class="track"></div><div class="fill"></div><div class="thumb"></div></div><canvas class="vu" width="96" height="460"></canvas></div>
-    <div class="db"></div><button class="mute">MUTE</button>`;
+    <div class="db"></div><div class="btns"><button class="mute">MUTE</button>${s.soloable ? '<button class="solo">SOLO</button>' : ""}</div>`;
   el.querySelector(".mtitle").textContent = s.name;
   el.querySelector(".mute").onclick = () => send({cmd:"strip", id:s.id, mute: !strip(s.id).mute});
+  if (s.soloable) el.querySelector(".solo").onclick = () => send({cmd:"strip", id:s.id, solo: !strip(s.id).solo});
   el.querySelectorAll("[data-h]").forEach(c => c.onchange = () => send({cmd:"monitor", [c.dataset.h]: c.checked}));
-  if (s.id === "mic"){
-    el.querySelector(".inp").onchange = e => send({cmd:"mic", input: e.target.value});
-    el.querySelector(".tobot input").onchange = e => send({cmd:"mic", to_bot: e.target.checked});
+  el.querySelectorAll("[data-in]").forEach(c => { const i = inputOf(c.dataset.in); c.nextElementSibling.textContent = i ? i.name : c.dataset.in;
+    c.onchange = () => send({cmd:"input", id:c.dataset.in, hear: c.checked}); });
+  if (s.input){
+    el.querySelector(".inp").onchange = e => send({cmd:"input", id:s.id, device: e.target.value});
+    el.querySelector(".tobot input").onchange = e => send({cmd:"input", id:s.id, to_bot: e.target.checked});
   }
+  const pan = el.querySelector(".pan input"), pk = "pan:" + s.id; let plast = 0;
+  const setPan = (v, force) => { el.querySelector(".pv").textContent = fmtPan(v / 100); const now = Date.now();
+    if (force || now - plast > 60){ plast = now; send({cmd:"strip", id:s.id, pan: v / 100}); } };
+  pan.oninput = () => { dragging[pk] = true; setPan(+pan.value); };
+  pan.onchange = () => { setPan(+pan.value, true); dragging[pk] = false; };
+  pan.ondblclick = () => { pan.value = 0; setPan(0, true); dragging[pk] = false; };
   el.querySelectorAll("[data-a]").forEach(b => b.onclick = () => insertAction(s.id, b.dataset.a));
   setupFader(el, s.id);
   return el;
@@ -324,7 +342,7 @@ function showFader(el, db){
 }
 
 function renderMixer(){
-  const box = $("#strips"), sig = S.strips.map(s => s.id).join();
+  const box = $("#strips"), sig = JSON.stringify(S.strips.map(s => [s.id, s.name]));
   if (box.dataset.sig !== sig){
     box.dataset.sig = sig; box.innerHTML = "";
     S.strips.forEach(s => box.appendChild(buildStrip(s)));
@@ -332,6 +350,9 @@ function renderMixer(){
   S.strips.forEach(s => { const el = box.querySelector(`[data-id="${s.id}"]`); if (!el) return;
     if (!dragging[s.id]) showFader(el, s.gain_db);
     el.querySelector(".mute").classList.toggle("on", s.mute);
+    if (s.soloable) el.querySelector(".solo").classList.toggle("on", !!s.solo);
+    if (!dragging["pan:" + s.id]){ el.querySelector(".pan input").value = Math.round((s.pan || 0) * 100);
+      el.querySelector(".pv").textContent = fmtPan(s.pan || 0); }
     const ul = el.querySelector(".ins"), isig = JSON.stringify([s.inserts, selected[s.id]]);
     if (ul.dataset.sig !== isig){
       ul.dataset.sig = isig; ul.innerHTML = "";
@@ -346,18 +367,21 @@ function renderMixer(){
         li.ondblclick = () => { selected[s.id] = i; openParams(s.id, i); };
         ul.appendChild(li); });
     }
-    if (s.id === "monitor" && S.monitor) el.querySelectorAll("[data-h]").forEach(c => c.checked = !!S.monitor[c.dataset.h]);
-    if (s.id === "mic" && S.mic){
-      const sel = el.querySelector(".inp"), opts = JSON.stringify([S.mic.inputs, S.mic.input]);
+    if (s.id === "monitor" && S.monitor){ el.querySelectorAll("[data-h]").forEach(c => c.checked = !!S.monitor[c.dataset.h]);
+      el.querySelectorAll("[data-in]").forEach(c => { const i = inputOf(c.dataset.in); c.checked = !!(i && i.hear); }); }
+    const inp = s.input && inputOf(s.id);
+    if (inp && S.mic){
+      const sel = el.querySelector(".inp"), opts = JSON.stringify([S.mic.inputs, inp.device]);
       if (sel.dataset.sig !== opts && document.activeElement !== sel){
         sel.dataset.sig = opts; sel.innerHTML = "";
         const add = (v, t) => { const o = document.createElement("option"); o.value = v; o.textContent = t; sel.appendChild(o); };
         add("", "— nessuno —");
         S.mic.inputs.forEach(n => add(n, n));
-        if (S.mic.input && !S.mic.inputs.includes(S.mic.input)) add(S.mic.input, S.mic.input + " (non trovato)");
-        sel.value = S.mic.input || "";
+        if (inp.device && !S.mic.inputs.includes(inp.device)) add(inp.device, inp.device + " (non trovato)");
+        sel.value = inp.device || "";
       }
-      el.querySelector(".tobot input").checked = !!S.mic.to_bot;
+      el.querySelector(".chs").textContent = inp.device ? `· ${inp.mono ? "mono" : "stereo"} ${inp.channels}` : "";
+      el.querySelector(".tobot input").checked = !!inp.to_bot;
     }
   });
   const B = S.bot, chip = $("#botchip");

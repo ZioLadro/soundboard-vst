@@ -187,6 +187,7 @@ class RemoteController(QObject):
         p = eng.player
         cur = p.current
         bot = w.bot
+        soloable = set(eng.source_strips)
         self._state = {
             "pads": {"pages": pages, "current": lay.current, "cols": lay.cols},
             "player": {
@@ -198,10 +199,14 @@ class RemoteController(QObject):
                 "queue": [{"title": t.title, "duration": t.duration, "kind": t.kind} for t in p.tracks[:300]],
             },
             "strips": [{"id": s.id, "name": s.name, "gain_db": s.gain_db, "mute": s.mute,
+                        "pan": round(s.pan, 2), "solo": s.solo, "soloable": s in soloable,
+                        "input": s in eng.inputs,
                         "inserts": [{"name": slot.display_name, "kind": slot.kind, "bypass": slot.bypass,
                                      "failed": slot.failed} for slot in s.inserts]} for s in eng.strips],
             "mic": {"inputs": self._input_names(), "input": w.config.data["audio"].get("input_device", ""),
                     "to_bot": eng.mic_to_bot},
+            "inputs": [{"id": s.id, "name": s.name, "device": s.device, "to_bot": s.to_bot, "hear": s.hear,
+                        "channels": s.channel_label, "mono": s.mono} for s in eng.inputs],
             "monitor": {"hear_sounds": eng.monitor_hear_sounds, "hear_tts": eng.monitor_hear_tts,
                         "hear_player": eng.monitor_hear_player, "hear_mic": eng.monitor_hear_mic},
             "bot": {"available": discord_bot.available(), "running": bot.running, "online": bot.status.online,
@@ -278,8 +283,32 @@ class RemoteController(QObject):
                 if "mute" in c:
                     strip.mute = bool(c["mute"])
                     eventlog.log(eventlog.SOUND, f"{'Muto' if strip.mute else 'Audio attivo'}: {strip.name}")
+                if "pan" in c:
+                    strip.pan = max(-1.0, min(1.0, float(c["pan"])))
+                if "solo" in c and strip in w.engine.source_strips:
+                    strip.solo = bool(c["solo"])
+                    eventlog.log(eventlog.SOUND, f"{'Solo' if strip.solo else 'Fine solo'}: {strip.name}")
                 w.mixer.sync_levels()
                 w.schedule_save()
+            elif cmd == "input":
+                strip = w.engine.input_strip(str(c.get("id")))
+                if strip is None:
+                    return
+                if "to_bot" in c:
+                    ui = w.mixer._input_ui.get(strip.id)
+                    if ui is not None:
+                        ui["to_bot"].setChecked(bool(c["to_bot"]))   # come il clic nel mixer del PC
+                if "hear" in c:
+                    strip.hear = bool(c["hear"])
+                    w.mixer.sync_from_model()
+                    w.schedule_save()
+                if "device" in c:
+                    name = str(c["device"])
+                    if name == "" or name in self._input_names(refresh=True):
+                        if strip.id == "mic":
+                            w.set_input_device(name)
+                        else:
+                            w.set_input_device(name, strip.id)
             elif cmd == "insert":
                 self._insert(c)
             elif cmd == "mic":

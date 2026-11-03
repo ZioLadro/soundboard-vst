@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 from PySide6.QtCore import QRegularExpression, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence, QRegularExpressionValidator
 from PySide6.QtWidgets import (
@@ -42,6 +44,33 @@ class SettingsDialog(QDialog):
         self.input = QComboBox()
         self.virtual = QComboBox()
         self.monitor = QComboBox()
+        self.virtual_ch = QComboBox()
+        self.monitor_ch = QComboBox()
+        for ch in (self.virtual_ch, self.monitor_ch):
+            ch.setToolTip("Coppia di canali del dispositivo (per le schede con più uscite, es. ASIO)")
+            ch.setMinimumContentsLength(6)
+        self._outs: dict[str, devices.Device] = {}
+        self._ch_choice = {self.virtual_ch: int(a.get("virtual_channel", 0) or 0),
+                           self.monitor_ch: int(a.get("monitor_channel", 0) or 0)}
+        for ch in (self.virtual_ch, self.monitor_ch):
+            ch.activated.connect(lambda _i, c=ch: self._ch_choice.__setitem__(c, int(c.currentData() or 0)))
+        self.virtual.currentIndexChanged.connect(
+            lambda: self._fill_channels(self.virtual, self.virtual_ch, a.get("virtual_channel", 0)))
+        self.monitor.currentIndexChanged.connect(
+            lambda: self._fill_channels(self.monitor, self.monitor_ch, a.get("monitor_channel", 0)))
+        self.asio = QCheckBox("Driver ASIO (schede audio professionali, Voicemeeter…): vale dal prossimo avvio")
+        self.asio.setChecked(bool(a.get("asio", True)))
+        self.asio.setToolTip("Aggiunge «ASIO» all'elenco dei driver. Se un driver ASIO dà problemi\n"
+                             "all'avvio del programma, togli la spunta e riavvia.")
+        self.asio_hint = QLabel(
+            "<b>ASIO</b>: si usa un solo dispositivo per tutto. Scegli lo stesso dispositivo per Discord e "
+            "cuffie con <b>coppie di canali diverse</b> (es. 1-2 verso Discord, 3-4 in cuffia); gli ingressi "
+            "(anche mono, uno per canale) si scelgono nel mixer. La frequenza deve essere una di quelle "
+            "supportate dal driver.")
+        self.asio_hint.setWordWrap(True)
+        self.asio_hint.setTextFormat(Qt.TextFormat.RichText)
+        self.asio_hint.setStyleSheet(f"color: {theme.ACCENT};")
+        self.asio_hint.setVisible(False)
         self.sample_rate = QComboBox()
         for sr in (44100, 48000, 96000):
             self.sample_rate.addItem(f"{sr} Hz", sr)
@@ -74,12 +103,29 @@ class SettingsDialog(QDialog):
         api_row.addWidget(self.host_api, 1)
         api_row.addWidget(refresh)
         form.addRow("Driver (host API)", api_row)
-        form.addRow("Ingresso (microfono / scheda)", self.input)
-        form.addRow("Uscita verso Discord", self.virtual)
-        form.addRow("Monitor (cuffie)", self.monitor)
+        form.addRow("Ingresso del Microfono", self.input)
+
+        def with_channels(dev: QComboBox, ch: QComboBox) -> QHBoxLayout:
+            row = QHBoxLayout()
+            row.addWidget(dev, 1)
+            row.addWidget(QLabel("canali"))
+            row.addWidget(ch)
+            return row
+
+        form.addRow("Uscita verso Discord", with_channels(self.virtual, self.virtual_ch))
+        form.addRow("Monitor (cuffie)", with_channels(self.monitor, self.monitor_ch))
         form.addRow("Frequenza", self.sample_rate)
         form.addRow("Buffer", self.block)
+        form.addRow(self.asio_hint)
         form.addRow(hint)
+        inputs_hint = QLabel("Altri ingressi (secondo microfono, strumenti, linee; mono o stereo) si aggiungono "
+                             "nella tab <b>Mixer</b> con «＋ Ingresso».")
+        inputs_hint.setWordWrap(True)
+        inputs_hint.setTextFormat(Qt.TextFormat.RichText)
+        inputs_hint.setStyleSheet(f"color: {theme.MUTED};")
+        form.addRow(inputs_hint)
+        if sys.platform == "win32":
+            form.addRow(self.asio)
         vb_row = QHBoxLayout()
         vb_row.addWidget(vb_btn)
         vb_row.addStretch(1)
@@ -446,13 +492,30 @@ class SettingsDialog(QDialog):
             idx = combo.findData(target)
             combo.setCurrentIndex(idx if idx >= 0 else 0)
 
-        fill(self.input, ins, a.get("input_device", ""), mark_loopback=True)
-        fill(self.virtual, outs, a.get("virtual_output", ""), mark_virtual=True)
+        asio = devices.is_asio(api)
+        self._outs = {d.name: d for d in outs}
+        fill(self.input, ins, a.get("input_device", ""), mark_loopback=not asio)
+        fill(self.virtual, outs, a.get("virtual_output", ""), mark_virtual=not asio)
         fill(self.monitor, outs, a.get("monitor_output", ""))
-        if not self.virtual.currentData():
+        if not self.virtual.currentData() and not asio:
             guess = devices.guess_virtual_output(api)
             if guess:
                 self.virtual.setCurrentIndex(self.virtual.findData(guess.name))
+        self.asio_hint.setVisible(asio)
+        self._fill_channels(self.virtual, self.virtual_ch, a.get("virtual_channel", 0))
+        self._fill_channels(self.monitor, self.monitor_ch, a.get("monitor_channel", 0))
+
+    def _fill_channels(self, dev_combo: QComboBox, ch_combo: QComboBox, saved: int = 0) -> None:
+        """Coppie di canali del dispositivo scelto; resta la scelta fatta (o salvata) se c'è ancora."""
+        dev = self._outs.get(dev_combo.currentData() or "")
+        ch_combo.blockSignals(True)
+        ch_combo.clear()
+        pairs = devices.channel_pairs(dev.max_out) if dev else [(0, "1-2")]
+        for first, label in pairs:
+            ch_combo.addItem(label, first)
+        ch_combo.setCurrentIndex(max(0, ch_combo.findData(self._ch_choice.get(ch_combo, 0))))
+        ch_combo.blockSignals(False)
+        ch_combo.setEnabled(dev is not None and len(pairs) > 1)
 
     # VST3 --------------------------------------------------------------------------
     def _add_dir(self) -> None:
@@ -606,6 +669,9 @@ class SettingsDialog(QDialog):
         a["input_device"] = self.input.currentData() or ""
         a["virtual_output"] = self.virtual.currentData() or ""
         a["monitor_output"] = self.monitor.currentData() or ""
+        a["virtual_channel"] = int(self.virtual_ch.currentData() or 0)
+        a["monitor_channel"] = int(self.monitor_ch.currentData() or 0)
+        a["asio"] = self.asio.isChecked()
         a["sample_rate"] = int(self.sample_rate.currentData())
         a["block_size"] = int(self.block.currentData())
         # aggiorna senza sostituire: restano le chiavi che il dialogo non gestisce (es. canale dedicato)

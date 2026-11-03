@@ -1,4 +1,4 @@
-"""Impostazioni di un suono: volume, inizio/fine e dissolvenze, colore, icona, scorciatoia e nota MIDI."""
+"""Impostazioni di un suono: volume, pan, inizio/fine e dissolvenze, colore, icona, scorciatoia e nota MIDI."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .. import midi
 from ..audio.library import shape, shape_params
+from ..audio.mixer import format_pan
 from ..config import config_dir
 from . import theme
 from .waveform import WaveformEditor
@@ -122,6 +123,29 @@ class SoundSettingsDialog(QDialog):
         vrow = QHBoxLayout()
         vrow.addWidget(self.volume, 1)
         vrow.addWidget(vol_label)
+
+        # Pan ------------------------------------------------------------------------
+        from .mixer_view import PanSlider
+
+        try:
+            pan = max(-1.0, min(1.0, float(settings.get("pan", 0.0) or 0.0)))
+        except (TypeError, ValueError):
+            pan = 0.0
+        self.pan = PanSlider()
+        self.pan.setToolTip("Posizione del suono: sinistra o destra (doppio clic = centro).\n"
+                            "Si somma al pan del canale Soundboard nel mixer.")
+        self.pan.setValue(int(round(pan * 100)))
+        pan_label = QLabel(format_pan(pan))
+        pan_label.setMinimumWidth(40)
+        self.pan.valueChanged.connect(lambda v: pan_label.setText(format_pan(v / 100.0)))
+        pan_center = QPushButton("C")
+        pan_center.setFixedWidth(32)
+        pan_center.setToolTip("Al centro")
+        pan_center.clicked.connect(lambda: self.pan.setValue(0))
+        prow = QHBoxLayout()
+        prow.addWidget(self.pan, 1)
+        prow.addWidget(pan_label)
+        prow.addWidget(pan_center)
 
         # Inizio, fine e dissolvenze ---------------------------------------------------
         start, end, fade_in, fade_out = shape_params(settings)
@@ -266,6 +290,7 @@ class SoundSettingsDialog(QDialog):
         form.addRow("Categoria", self.category)
         form.addRow("Immagine", irow)
         form.addRow("Volume", vrow)
+        form.addRow("Pan", prow)
         form.addRow("Taglio e\ndissolvenze", shape_box)
         form.addRow("Colore", color_box)
         form.addRow("Icona", ebox)
@@ -328,7 +353,11 @@ class SoundSettingsDialog(QDialog):
         if self._preview is None or self._audio is None:
             return
         data = shape(self._audio, self._sr, *shape_params(self.shape_values()))
-        self._preview(data, self.volume.value() / 100.0)
+        pan = self.pan.value() / 100.0
+        if pan:
+            self._preview(data, self.volume.value() / 100.0, pan)
+        else:
+            self._preview(data, self.volume.value() / 100.0)
 
     # Immagine ---------------------------------------------------------------------------
     def _set_image(self, path: str) -> None:
@@ -416,6 +445,7 @@ class SoundSettingsDialog(QDialog):
             "label": self.label.text().strip(),
             "image": self.image,
             "volume": self.volume.value() / 100.0,
+            "pan": self.pan.value() / 100.0,
             "shortcut": self.shortcut.keySequence().toString(),
             "color": self.color,
             "emoji": self.emoji.text().strip(),

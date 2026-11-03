@@ -130,3 +130,114 @@ SVG = {
 def svg(name: str, size: int = 22) -> str:
     return (f'<svg viewBox="0 0 24 24" width="{size}" height="{size}" fill="currentColor" '
             f'aria-hidden="true">{SVG[name]}</svg>')
+
+
+# Icona del programma -------------------------------------------------------------------------
+APP_ICON_SIZES = (16, 20, 24, 32, 40, 48, 64, 96, 128, 256)
+
+
+def paint_app_icon(p: QPainter, size: int) -> None:
+    """Icona originale: fumetto della chat vocale con una doppia croma (♫) e onde sonore.
+
+    Disegnata su una griglia 256×256 e scalata; sotto i 32 px le onde spariscono per restare leggibile.
+    """
+    from PySide6.QtGui import QLinearGradient
+
+    p.save()
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.scale(size / 256.0, size / 256.0)
+    small = size < 32
+
+    # Fondo: quadrato arrotondato scuro con un leggero gradiente
+    bg = QLinearGradient(0, 0, 256, 256)
+    bg.setColorAt(0.0, QColor("#2d3240"))
+    bg.setColorAt(1.0, QColor("#14161b"))
+    p.setPen(QPen(QColor("#3a4050"), 4) if not small else Qt.PenStyle.NoPen)
+    p.setBrush(bg)
+    p.drawRoundedRect(QRectF(8, 8, 240, 240), 56, 56)
+
+    # Fumetto (voce) con la coda in basso a sinistra
+    bubble = QPainterPath()
+    bubble.addRoundedRect(QRectF(30, 44, 168, 132), 48, 48)
+    tail = QPainterPath()
+    tail.moveTo(58, 150)
+    tail.lineTo(40, 214)
+    tail.lineTo(112, 168)
+    tail.closeSubpath()
+    bubble = bubble.united(tail)
+    grad = QLinearGradient(30, 44, 198, 214)
+    grad.setColorAt(0.0, QColor("#57dcc6"))
+    grad.setColorAt(1.0, QColor("#239c8a"))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(grad)
+    p.drawPath(bubble)
+
+    # Doppia croma (♫) dentro il fumetto
+    note = QColor(theme.BG)
+    p.setBrush(note)
+    p.save()
+    for cx, cy in ((84, 142), (146, 130)):
+        p.save()
+        p.translate(cx, cy)
+        p.rotate(-22)
+        p.drawEllipse(QRectF(-21, -14, 42, 28))
+        p.restore()
+    p.restore()
+    p.drawRect(QRectF(95, 76, 11, 64))              # gambi
+    p.drawRect(QRectF(157, 64, 11, 64))
+    beam = QPolygonF([QPointF(95, 76), QPointF(168, 58), QPointF(168, 80), QPointF(95, 98)])
+    p.drawPolygon(beam)
+
+    # Onde sonore a destra (arancio, colore dei suoni in riproduzione)
+    if not small:
+        pen = QPen(QColor(theme.ACCENT), 15, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawArc(QRectF(176, 82, 40, 76), -60 * 16, 120 * 16)
+        p.drawArc(QRectF(170, 58, 68, 124), -55 * 16, 110 * 16)
+    else:
+        p.setBrush(QColor(theme.ACCENT))
+        p.drawEllipse(QRectF(196, 34, 40, 40))         # puntino «attivo» al posto delle onde
+    p.restore()
+
+
+def app_icon_image(size: int):
+    from PySide6.QtGui import QImage
+
+    img = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
+    img.fill(Qt.GlobalColor.transparent)
+    p = QPainter(img)
+    paint_app_icon(p, size)
+    p.end()
+    return img
+
+
+@lru_cache(maxsize=1)
+def app_icon() -> QIcon:
+    """Icona della finestra, della barra delle applicazioni e del programma ridotto a icona."""
+    ic = QIcon()
+    for s in APP_ICON_SIZES:
+        ic.addPixmap(QPixmap.fromImage(app_icon_image(s)))
+    return ic
+
+
+def ico_bytes(sizes=(16, 20, 24, 32, 40, 48, 64, 128, 256)) -> bytes:
+    """File .ico di Windows con più dimensioni (immagini PNG), per l'eseguibile."""
+    import struct
+
+    from PySide6.QtCore import QBuffer, QByteArray, QIODevice
+
+    pngs = []
+    for s in sizes:
+        data = QByteArray()
+        buf = QBuffer(data)
+        buf.open(QIODevice.OpenModeFlag.WriteOnly)
+        app_icon_image(s).save(buf, "PNG")
+        buf.close()
+        pngs.append((s, bytes(data)))
+    out = struct.pack("<HHH", 0, 1, len(pngs))
+    offset = 6 + 16 * len(pngs)
+    for s, png in pngs:
+        out += struct.pack("<BBBBHHII", s % 256, s % 256, 0, 0, 1, 32, len(png), offset)
+        offset += len(png)
+    return out + b"".join(png for _, png in pngs)

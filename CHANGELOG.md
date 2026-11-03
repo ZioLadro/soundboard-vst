@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.0.0 — 2026-11-03
+
+### Novità
+- **ASIO** (Windows): nuovo driver «ASIO» in *Impostazioni → Audio* per schede audio professionali e Voicemeeter.
+  Ingressi, uscita verso Discord e cuffie passano da un unico flusso full-duplex sullo stesso dispositivo, su
+  coppie di canali a scelta (es. 1-2 verso Discord, 3-4 in cuffia). Si può disattivare (vale al riavvio).
+- **Canali delle uscite**: «Uscita verso Discord» e «Monitor» hanno la scelta della coppia di canali, anche con
+  WASAPI sulle schede con più uscite; Discord e cuffie possono stare sulla stessa scheda su canali diversi.
+- **Ingressi multipli**: «＋ Ingresso» nel mixer aggiunge canali d'ingresso (secondo microfono, strumenti, linee),
+  ognuno con dispositivo, canali, inserti, fader, *Anche al bot Discord* e ascolto in cuffia. Si **rinominano**
+  (doppio clic sul titolo o **⋯**) e si tolgono; anche il Microfono si può rinominare.
+- **Ingressi mono**: per ogni ingresso «Stereo 1-2, 3-4…» o «Mono 1, 2, 3…»; più ingressi mono sulla stessa scheda
+  la aprono una volta sola.
+- **Pan** su tutti i canali del mixer e su ogni suono (*Personalizza…*), anche nella pagina web.
+- **SOLO** sui canali d'ingresso e sulle sorgenti (Soundboard, Sintesi vocale, Player), anche nella pagina web:
+  con un canale in solo gli altri tacciono, anche verso Discord.
+- **Icona del programma**: fumetto della chat vocale con una doppia croma, per l'eseguibile, la finestra e la barra
+  delle applicazioni.
+- Pagina web: ingresso, *Anche al bot* e ascolto in cuffia per ogni canale d'ingresso.
+
+### Note
+- Serve **sounddevice 0.5.1** o successivo (include PortAudio con ASIO).
+
 ## v0.9.1 — 2026-11-03
 
 ### Correzioni

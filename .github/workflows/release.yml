@@ -67,6 +67,8 @@ jobs:
             --collect-all yt_dlp_ejs `
             --collect-all segno `
             --collect-all edge_tts `
+            --collect-all _sounddevice_data `
+            --icon tools/packaging/icon.ico `
             --add-binary "$deno;deno_bin" `
             tools/packaging/launch.py
 

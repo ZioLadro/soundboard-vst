@@ -444,7 +444,7 @@ class DiscordBot:
                 else:
                     bot._set_status(channel=f"{after.channel.guild.name} › {after.channel.name}",
                                     conflict=False, message=f"Nel canale {after.channel.name}")
-                    if (bot.continuous or bot.engine.mic_to_bot) and before.channel is None:
+                    if (bot.continuous or bot.engine.inputs_to_bot) and before.channel is None:
                         await asyncio.sleep(0.5)          # attende che la connessione voce sia pronta
                         await bot._start_playing()
                 return
@@ -681,7 +681,7 @@ class DiscordBot:
             self._vc = vc
             return
         source = SoundboardSource(self.engine.bot_ring, lambda: self.engine.sample_rate, self.engine.has_active_sounds,
-                                  is_continuous=lambda: self.continuous or self.engine.mic_to_bot,
+                                  is_continuous=lambda: self.continuous or self.engine.inputs_to_bot,
                                   on_idle=self._on_idle,
                                   on_latency=self._on_latency)
         source.mark(t0)
