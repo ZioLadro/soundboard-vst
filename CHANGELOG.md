@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.9.1 — 2026-11-03
+
+### Correzioni
+- **Rotella del pitch bend** (es. Nektar Impact LX25+): prima veniva ignorata, ora si assegna con «Impara» ai
+  parametri degli inserti e ai volumi della mappa MIDI. Usa tutti i 14 bit della rotella (movimenti più fini di un
+  CC). Non si assegna ai pad né alle azioni a pulsante. La rotella di modulazione era già assegnabile (è il CC 1).
+
 ## v0.9.0 — 2026-11-03
 
 ### Novità

@@ -1,4 +1,4 @@
-"""Ingresso MIDI: note e controlli (CC) per far suonare i pad.
+"""Ingresso MIDI: note, controlli (CC) e rotella del pitch bend.
 
 Usa ``python-rtmidi`` se installato; altrimenti il MIDI risulta non disponibile
 e il resto del programma funziona normalmente.
@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable
+
+PITCH_MAX = 16383
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
@@ -43,22 +45,33 @@ def note_name(number: int) -> str:
 
 @dataclass(frozen=True)
 class MidiEvent:
-    kind: str        # "note" | "cc"
+    kind: str        # "note" | "cc" | "pitch"
     channel: int     # 1-16
-    number: int      # nota o numero del controllo
-    value: int       # velocity o valore del controllo
+    number: int      # nota o numero del controllo (0 per il pitch bend)
+    value: int       # velocity o valore del controllo (0–127); pitch bend 0–16383, centro 8192
 
     @property
     def pressed(self) -> bool:
         return self.value > 0
+
+    @property
+    def continuous(self) -> bool:
+        """Potenziometri, fader e rotelle: tutto ciò che può guidare un valore."""
+        return self.kind in ("cc", "pitch")
+
+    @property
+    def normalized(self) -> float:
+        """Valore 0–1 (il pitch bend usa tutti i suoi 14 bit: movimenti più fini di un CC)."""
+        top = PITCH_MAX if self.kind == "pitch" else 127
+        return max(0.0, min(1.0, self.value / top))
 
     def binding(self) -> dict:
         return {"type": self.kind, "channel": self.channel, "number": self.number}
 
 
 def parse(message: list[int]) -> MidiEvent | None:
-    """Interpreta un messaggio MIDI grezzo: note on (velocity > 0) e tutti i CC (anche valore 0,
-    che serve ai fader; per le azioni a pulsante si usa solo il valore > 0)."""
+    """Interpreta un messaggio MIDI grezzo: note on (velocity > 0), tutti i CC (anche valore 0,
+    che serve ai fader; per le azioni a pulsante si usa solo il valore > 0) e il pitch bend."""
     if len(message) < 3:
         return None
     status, d1, d2 = message[0], message[1], message[2]
@@ -67,6 +80,8 @@ def parse(message: list[int]) -> MidiEvent | None:
         return MidiEvent("note", channel, d1, d2)
     if kind == 0xB0:
         return MidiEvent("cc", channel, d1, d2)
+    if kind == 0xE0:                                  # pitch bend: LSB in d1, MSB in d2
+        return MidiEvent("pitch", channel, 0, ((d2 & 0x7F) << 7) | (d1 & 0x7F))
     return None
 
 
@@ -82,7 +97,8 @@ def binding_label(binding: dict | None) -> str:
         return ""
     n = int(binding.get("number", 0))
     ch = binding.get("channel")
-    base = f"{note_name(n)}" if binding.get("type") == "note" else f"CC {n}"
+    kind = binding.get("type")
+    base = note_name(n) if kind == "note" else "Pitch bend" if kind == "pitch" else f"CC {n}"
     return f"{base} · ch {ch}" if ch else base
 
 
