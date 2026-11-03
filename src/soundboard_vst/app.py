@@ -25,6 +25,7 @@ from .audio.plugins import scan_vst3
 from .discord_bot import DiscordBot
 from .config import Config, config_dir
 from .ui import theme
+from .ui import plugin_dialogs
 from .ui.log_view import LogView
 from .ui.screen import ElidedLabel, initial_window_size, keep_on_screen, scrollable
 from .ui.mixer_view import MixerView
@@ -137,7 +138,9 @@ class MainWindow(QMainWindow):
         self.board.changed.connect(self.schedule_save)
         self.board.sounds_reloaded.connect(self.preload_sounds)
 
-        self.mixer = MixerView(self.engine, self.vst_plugins, self.rescan_vst)
+        self.mixer = MixerView(self.engine, self.vst_plugins, self.rescan_vst, inputs=self.input_names,
+                               current_input=lambda: self.config.data["audio"].get("input_device", ""),
+                               set_input=self.set_input_device, on_mic_to_bot=self._on_mic_to_bot)
         self.mixer.changed.connect(self.schedule_save)
         mixer_page = QWidget()
         mp = QVBoxLayout(mixer_page)
@@ -203,6 +206,7 @@ class MainWindow(QMainWindow):
         self.midi_bridge = MidiBridge()
         self.midi_bridge.event.connect(self._on_midi)
         self.midi_in = midi.MidiInput()
+        plugin_dialogs.MIDI = self                      # «MIDI» accanto ai parametri degli inserti
         self.board.midi_bridge = self.midi_bridge
         QTimer.singleShot(0, self.preload_sounds)
         if autostart:
@@ -250,6 +254,30 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Audio", st.message)
             return
         self.check_echo()
+
+    def input_names(self) -> list[str]:
+        """Ingressi audio del driver scelto (per il canale Microfono del mixer e della pagina web)."""
+        if not devices.audio_available():
+            return []
+        try:
+            return [d.name for d in devices.inputs(self.config.data["audio"].get("host_api", ""))]
+        except Exception:
+            return []
+
+    def set_input_device(self, name: str) -> None:
+        """Cambia il microfono dal mixer: salva e riavvia l'audio se era acceso."""
+        self.config.data["audio"]["input_device"] = name
+        self.config.save()
+        eventlog.log(eventlog.SOUND, f"Ingresso del microfono: {name or 'nessuno'}")
+        if self.engine.status.running:
+            self.start_audio()
+        self.mixer.refresh_inputs()
+
+    def _on_mic_to_bot(self, on: bool) -> None:
+        eventlog.log(eventlog.DISCORD, "Microfono inviato anche al bot" if on else "Microfono non più inviato al bot")
+        if on:
+            self.bot.notify_sound()             # se il bot è in canale, inizia a trasmettere subito
+        self.schedule_save()
 
     def check_echo(self) -> None:
         """Avvisa se la configurazione fa sentire agli altri la propria voce su Discord."""
@@ -568,7 +596,44 @@ class MainWindow(QMainWindow):
         else:
             self.statusBar().showMessage(f"Controller MIDI non trovato: {name}", 8000)
 
+    def find_insert(self, uid: str):
+        for strip in self.engine.strips:
+            for slot in strip.inserts:
+                if slot.uid == uid:
+                    return slot
+        return None
+
+    # Parametri degli inserti su controlli MIDI («Impara» nelle finestre dei parametri) ---------
+    def midi_label(self, target_id: str) -> str:
+        return midi.binding_label(self.config.data.get("midi_map", {}).get(target_id))
+
+    def midi_learn(self, target_id: str, done) -> None:
+        """Il prossimo controllo MIDI mosso viene assegnato a ``target_id``; poi ``done(etichetta)``."""
+        if not self.midi_in.name:
+            self.statusBar().showMessage("Scegli prima un controller in Impostazioni → MIDI.", 6000)
+            done("")
+            return
+        self._param_learn = (target_id, done)
+        self.statusBar().showMessage("Muovi un potenziometro o un fader del controller…", 8000)
+
+    def midi_learn_cancel(self) -> None:
+        self._param_learn = None
+
+    def midi_clear(self, target_id: str) -> None:
+        midi_map.assign(self.config.data.setdefault("midi_map", {}), target_id, None)
+        self.schedule_save()
+
     def _on_midi(self, ev) -> None:
+        learn = getattr(self, "_param_learn", None)
+        if learn is not None:
+            if ev.kind == "cc" or ev.pressed:
+                target_id, done = learn
+                self._param_learn = None
+                midi_map.assign(self.config.data.setdefault("midi_map", {}), target_id, ev.binding())
+                self.schedule_save()
+                eventlog.log(eventlog.SOUND, f"Controllo MIDI {midi.binding_label(ev.binding())} assegnato a un parametro", "MIDI")
+                done(midi.binding_label(ev.binding()))
+            return
         if self.board.is_learning or (self._settings_dialog is not None and self._settings_dialog.learning):
             return
         targets = midi_map.targets_for(self.config.data.get("midi_map", {}), ev)
@@ -589,6 +654,16 @@ class MainWindow(QMainWindow):
     def _run_target(self, target, ev) -> None:
         """Esegue un'azione della mappa MIDI."""
         tid = target.id
+        param = midi_map.parse_param_target(tid)
+        if param is not None:
+            # parametro di un inserto: CC 0–127 (o forza della nota) → dal minimo al massimo
+            if ev.kind == "note" and not ev.pressed:
+                return
+            slot = self.find_insert(param[0])
+            if slot is not None and slot.set_normalized(param[1], ev.value / 127.0):
+                self._params_dirty = True                  # salvataggio raggruppato (arrivano decine di CC)
+                self._save_timer.start()
+            return
         if target.kind == "continuous":
             if ev.kind != "cc":
                 return
@@ -783,18 +858,17 @@ class MainWindow(QMainWindow):
         if done:
             done(True, f"✅ Aggiunto **{Path(key).stem}**{place}{cut}.")
 
-    def set_greeting(self, user_id: str, name: str, join=None, leave=None) -> dict:
-        """Suoni di entrata/uscita di un utente (None = invariato, "" = nessuno). Restituisce la voce."""
+    def set_greeting(self, user_id: str, name: str, join=None, leave=None, mute=None, unmute=None) -> dict:
+        """Suoni di un utente quando entra, esce, si muta, si smuta (None = invariato, "" = nessuno)."""
         dc = self.config.data["discord"]
         g = normalize_greetings(dc.get("greetings"))
-        entry = g["users"].setdefault(str(user_id), {"name": name, "join": "", "leave": ""})
+        entry = g["users"].setdefault(str(user_id), {"name": name, "join": "", "leave": "", "mute": "", "unmute": ""})
         entry["name"] = name or entry.get("name", "")
-        if join is not None:
-            entry["join"] = join
-        if leave is not None:
-            entry["leave"] = leave
+        for key, value in (("join", join), ("leave", leave), ("mute", mute), ("unmute", unmute)):
+            if value is not None:
+                entry[key] = value
         result = dict(entry)
-        if not entry["join"] and not entry["leave"]:
+        if not any(entry[k] for k in ("join", "leave", "mute", "unmute")):
             g["users"].pop(str(user_id), None)
         dc["greetings"] = g
         self.bot.greetings = normalize_greetings(g)

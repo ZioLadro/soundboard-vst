@@ -38,6 +38,8 @@ PAD_METER_FALL_DB = 1.2      # dB per aggiornamento (~30 al secondo)
 MIME_KEY = "application/x-soundboard-key"
 MIME_PAD = "application/x-soundboard-pad"
 KEY_ROLE = Qt.ItemDataRole.UserRole + 1
+HEADER_ROLE = Qt.ItemDataRole.UserRole + 2     # intestazione di categoria nella libreria (testo = categoria)
+NO_CATEGORY = "Senza categoria"
 
 
 # Pad ------------------------------------------------------------------------------
@@ -342,12 +344,13 @@ class LibraryList(QListWidget):
         self.setObjectName("library")
         self.setDragEnabled(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
-        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
 
     def mimeData(self, items):
         md = QMimeData()
-        if items:
-            md.setData(MIME_KEY, items[0].data(KEY_ROLE).encode())
+        keys = [it.data(KEY_ROLE) for it in items if it.data(KEY_ROLE)]
+        if keys:
+            md.setData(MIME_KEY, keys[0].encode())
         return md
 
     def mimeTypes(self):
@@ -416,12 +419,15 @@ class SoundboardView(QWidget):
         lib_title.setObjectName("sectionTitle")
         self.count_label = QLabel()
         self.count_label.setStyleSheet(f"color: {theme.MUTED};")
+        self.category_filter = QComboBox()
+        self.category_filter.setToolTip("Mostra una categoria, i suoni senza categoria o quelli con una certa emoji")
+        self.category_filter.currentIndexChanged.connect(lambda _: self._refresh_library())
         self.search = QLineEdit()
         self.search.setPlaceholderText("Cerca nella libreria…")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._apply_filter)
         self.library = LibraryList()
-        self.library.itemDoubleClicked.connect(lambda it: self.play_key(it.data(KEY_ROLE)))
+        self.library.itemDoubleClicked.connect(lambda it: it.data(KEY_ROLE) and self.play_key(it.data(KEY_ROLE)))
         self.library.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.library.customContextMenuRequested.connect(self._library_menu)
         lib_hint = QLabel("Trascina un suono su un pad · doppio clic per ascoltarlo")
@@ -434,6 +440,7 @@ class SoundboardView(QWidget):
         lv = QVBoxLayout(lib_panel)
         lv.setContentsMargins(10, 10, 10, 10)
         lv.addLayout(lh)
+        lv.addWidget(self.category_filter)
         lv.addWidget(self.search)
         lv.addWidget(self.library, 1)
         lv.addWidget(lib_hint)
@@ -628,26 +635,156 @@ class SoundboardView(QWidget):
             self._save_layout()
         self.sounds_reloaded.emit()
 
+    # Categorie ------------------------------------------------------------------------
+    def category_of(self, key: str) -> str:
+        return (self.config.data["sounds"].get(key, {}).get("category") or "").strip()
+
+    def categories(self) -> list[str]:
+        return sorted({c for c in (self.category_of(k) for k in self.all_keys()) if c}, key=str.lower)
+
+    def _assigned_emoji(self, key: str) -> str:
+        return (self.config.data["sounds"].get(key, {}).get("emoji") or "").strip()
+
+    def _rebuild_category_filter(self, keys: list[str]) -> None:
+        combo = self.category_filter
+        current = combo.currentData()
+        counts: dict[str, int] = {}
+        emojis: dict[str, int] = {}
+        none = 0
+        for k in keys:
+            c = self.category_of(k)
+            if c:
+                counts[c] = counts.get(c, 0) + 1
+            else:
+                none += 1
+            e = self._assigned_emoji(k)
+            if e:
+                emojis[e] = emojis.get(e, 0) + 1
+        combo.blockSignals(True)
+        combo.clear()
+        # i dati sono stringhe «tipo:valore» (le tuple di Python non tornano uguali da Qt)
+        combo.addItem(f"Tutte le categorie ({len(keys)})", "all:")
+        for c in sorted(counts, key=str.lower):
+            combo.addItem(f"{c} ({counts[c]})", f"cat:{c}")
+        if counts and none:
+            combo.addItem(f"{NO_CATEGORY} ({none})", "none:")
+        if emojis:
+            combo.insertSeparator(combo.count())
+            for e in sorted(emojis, key=lambda x: (-emojis[x], x)):
+                combo.addItem(f"{e}  ({emojis[e]})", f"emoji:{e}")
+        idx = combo.findData(current) if current else 0
+        combo.setCurrentIndex(max(0, idx))
+        combo.setVisible(bool(counts or emojis))
+        combo.blockSignals(False)
+
+    def _filter_mode(self) -> tuple[str, str]:
+        mode, _, value = (self.category_filter.currentData() or "all:").partition(":")
+        return mode, value
+
+    def _filtered_keys(self, keys: list[str]) -> list[str]:
+        mode, value = self._filter_mode()
+        if mode == "cat":
+            return [k for k in keys if self.category_of(k) == value]
+        if mode == "none":
+            return [k for k in keys if not self.category_of(k)]
+        if mode == "emoji":
+            return [k for k in keys if self._assigned_emoji(k) == value]
+        return keys
+
     def _refresh_library(self) -> None:
         self.library.clear()
         keys = self.all_keys()
-        for k in keys:
+        self._rebuild_category_filter(keys)
+        shown = self._filtered_keys(keys)
+        grouped = self._filter_mode()[0] == "all" and bool(self.categories())
+        if grouped:
+            # intestazioni per categoria, quelli senza categoria alla fine
+            order = {c: i for i, c in enumerate(self.categories())}
+            shown = sorted(shown, key=lambda k: (order.get(self.category_of(k), len(order)), 0))
+        last = None
+        for k in shown:
+            if grouped:
+                cat = self.category_of(k) or NO_CATEGORY
+                if cat != last:
+                    header = QListWidgetItem(cat.upper())
+                    header.setData(HEADER_ROLE, cat)
+                    header.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                    f = header.font()
+                    f.setBold(True)
+                    f.setPointSizeF(max(7.0, f.pointSizeF() - 1))
+                    header.setFont(f)
+                    header.setForeground(QColor(theme.ACCENT))
+                    self.library.addItem(header)
+                    last = cat
             emoji, name = self._emoji(k), self.display_name(k)
             it = QListWidgetItem(f"{emoji}  {name}" if emoji else name)
             it.setData(KEY_ROLE, k)
             on_pad = self.layout_model.contains(k)
             if not on_pad:
                 it.setForeground(QColor(theme.MUTED))
-            it.setToolTip(self._title(k) + ("" if on_pad else "\nNon è su nessun pad"))
+            cat = self.category_of(k)
+            it.setToolTip(self._title(k) + (f"\nCategoria: {cat}" if cat else "") + ("" if on_pad else "\nNon è su nessun pad"))
             self.library.addItem(it)
         self._apply_filter(self.search.text())
-        self.count_label.setText(f"{len(keys)}")
+        self.count_label.setText(f"{len(shown)}" if len(shown) == len(keys) else f"{len(shown)}/{len(keys)}")
 
     def _apply_filter(self, text: str) -> None:
         t = text.lower().strip()
+        header = None
+        visible_in_group = False
         for i in range(self.library.count()):
             it = self.library.item(i)
-            it.setHidden(bool(t) and t not in it.text().lower())
+            if it.data(HEADER_ROLE) is not None:
+                if header is not None:
+                    header.setHidden(not visible_in_group)
+                header, visible_in_group = it, False
+                continue
+            key = it.data(KEY_ROLE) or ""
+            hit = not t or t in it.text().lower() or t in self.category_of(key).lower()
+            it.setHidden(not hit)
+            visible_in_group = visible_in_group or hit
+        if header is not None:
+            header.setHidden(not visible_in_group)
+
+    def selected_keys(self) -> list[str]:
+        return [it.data(KEY_ROLE) for it in self.library.selectedItems() if it.data(KEY_ROLE)]
+
+    def set_category(self, keys: list[str], category: str) -> None:
+        category = " ".join(category.split())[:40]
+        for k in keys:
+            self.config.sound_settings(k)["category"] = category
+        self._refresh_library()
+        self.changed.emit()
+
+    def _ask_category(self, keys: list[str]) -> None:
+        if not keys:
+            return
+        current = self.category_of(keys[0]) if len(keys) == 1 else ""
+        names = self.categories()
+        title = "Categoria" if len(keys) == 1 else f"Categoria di {len(keys)} suoni"
+        text, ok = QInputDialog.getItem(self, title, "Categoria (vuoto = nessuna):", [current] + [c for c in names if c != current],
+                                        0, True)
+        if ok:
+            self.set_category(keys, text)
+
+    def page_from_category(self, category: str) -> None:
+        """Nuova pagina con tutti i suoni di una categoria."""
+        keys = [k for k in self.all_keys() if (self.category_of(k) or NO_CATEGORY) == category]
+        if not keys:
+            return
+        page = self.layout_model.add_page(category)
+        for k in keys[: self.layout_model.size]:
+            self.layout_model.assign(page, self.layout_model.first_free(page), k)
+        self.layout_model.current = page
+        self._rebuild_page_tabs()
+        self._refresh_pads()
+        self._refresh_library()
+        self._save_layout()
+
+    def rename_category(self, old: str) -> None:
+        new, ok = QInputDialog.getText(self, "Rinomina categoria", "Nuovo nome:", text=old)
+        if ok and new.strip() and new.strip() != old:
+            self.set_category([k for k in self.all_keys() if self.category_of(k) == old], new)
 
     # Griglia ------------------------------------------------------------------------
     def _build_grid(self) -> None:
@@ -833,12 +970,27 @@ class SoundboardView(QWidget):
     def _library_menu(self, pos) -> None:
         item = self.library.itemAt(pos)
         m = QMenu(self)
+        if item is not None and item.data(HEADER_ROLE) is not None:
+            cat = item.data(HEADER_ROLE)
+            m.addAction(f"Nuova pagina con «{cat}»", lambda: self.page_from_category(cat))
+            if cat != NO_CATEGORY:
+                m.addAction("Rinomina categoria…", lambda: self.rename_category(cat))
+            m.exec(self.library.mapToGlobal(pos))
+            return
+        selected = self.selected_keys()
+        if item is not None and len(selected) > 1 and item.data(KEY_ROLE) in selected:
+            m.addAction(f"Imposta la categoria di {len(selected)} suoni…", lambda: self._ask_category(selected))
+            m.addAction("Togli la categoria", lambda: self.set_category(selected, ""))
+            m.addAction("Metti tutti nei primi pad liberi", lambda: [self.place_on_pad(k) for k in selected])
+            m.exec(self.library.mapToGlobal(pos))
+            return
         if item:
             key = item.data(KEY_ROLE)
             path = self.path_for(key)
             m.addAction("▶  Riproduci", lambda: self.play_key(key))
             m.addAction("Metti nel primo pad libero", lambda: self.place_on_pad(key))
             m.addAction("Personalizza (nome, immagine, colore, MIDI)…", lambda: self._edit_settings(key))
+            m.addAction("Categoria…", lambda: self._ask_category([key]))
             if tts.is_phrase(key):
                 m.addAction("💬  Modifica frase…", lambda: self.edit_phrase(key))
                 m.addSeparator()
@@ -972,7 +1124,7 @@ class SoundboardView(QWidget):
             else Path(key).stem
         dlg = SoundSettingsDialog(default_name, s, self.midi_bridge, self.midi_port, self,
                                   audio=self._audio_for(key), sample_rate=self.cache.sample_rate,
-                                  preview=self.preview_audio)
+                                  preview=self.preview_audio, categories=self.categories())
         self._learn_dialog = dlg
         try:
             ok = dlg.exec()

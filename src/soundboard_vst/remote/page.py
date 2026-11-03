@@ -55,7 +55,9 @@ input[type=text]{flex:1;font:inherit;color:var(--text);background:var(--panel2);
 .queue{list-style:none;margin:0;padding:0}
 .queue li{padding:10px 8px;border-bottom:1px solid var(--panel2);display:flex;gap:8px;cursor:pointer}
 .queue li.cur{color:var(--accent);font-weight:700}
-.queue li span:first-child{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.queue li span:first-of-type{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.queue .qi{width:18px;flex:0 0 18px;display:flex;align-items:center}
+.transport button{display:flex;align-items:center;justify-content:center}
 .pad .prog{position:absolute;left:0;bottom:0;height:4px;width:0;background:currentColor;opacity:.85;display:none}
 .pad .vu{position:absolute;right:4px;top:8px;bottom:10px;width:4px;border-radius:2px;background:rgba(255,255,255,.12);display:none;overflow:hidden}
 .pad .vu i{position:absolute;left:0;right:0;bottom:0;height:0;background:linear-gradient(to top,var(--accent2) 0%,#e3c84b 75%,var(--danger) 100%);background-size:100% var(--vuh,100px);background-position:bottom}
@@ -74,14 +76,16 @@ input[type=text]{flex:1;font:inherit;color:var(--text);background:var(--panel2);
 .ins input{margin:0;accent-color:var(--accent2);width:16px;height:16px}
 .itools{display:flex;gap:4px}
 .itools button{flex:1;padding:4px 0;font-size:13px;border-radius:6px}
-.hear label{display:flex;align-items:center;gap:6px;font-size:13px;padding:2px 0}
+.hear label,.tobot{display:flex;align-items:center;gap:6px;font-size:13px;padding:2px 0}
+.tobot input{accent-color:var(--accent2);width:16px;height:16px;margin:0}
+select.inp{width:100%;font:inherit;font-size:12px;color:var(--text);background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:6px}
 .hear input{accent-color:var(--accent2);width:16px;height:16px;margin:0}
 .fm{display:flex;justify-content:center;align-items:flex-end;gap:12px;padding:6px 0;flex:1}
 .fader{position:relative;width:26px;height:230px;touch-action:none;cursor:ns-resize}
 .fader .track{position:absolute;left:10px;width:6px;top:0;bottom:0;background:var(--bg);border-radius:3px}
 .fader .fill{position:absolute;left:10px;width:6px;bottom:0;background:var(--accent2);border-radius:3px}
 .fader .thumb{position:absolute;left:0;width:26px;height:16px;margin-bottom:-8px;background:#e6e8ee;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.5)}
-canvas.vu{width:22px;height:230px}
+canvas.vu{width:48px;height:230px}
 .mstrip .db{text-align:center;font:12px ui-monospace,Consolas,monospace;color:var(--muted)}
 .mstrip button.mute{padding:6px 0;font-weight:700;font-size:13px}
 .mstrip button.mute.on{background:var(--danger);color:#fff;border:none}
@@ -132,10 +136,10 @@ canvas.vu{width:22px;height:230px}
         <span class="time" id="t-dur">--:--</span>
       </div>
       <div class="transport">
-        <button data-p="prev">⏮</button>
-        <button data-p="toggle" class="big" id="pp">▶</button>
-        <button data-p="stop">⏹</button>
-        <button data-p="next">⏭</button>
+        <button data-p="prev" data-icon="prev" title="Precedente"></button>
+        <button data-p="toggle" class="big" id="pp" data-icon="play" title="Play / Pausa"></button>
+        <button data-p="stop" data-icon="stop" title="Stop"></button>
+        <button data-p="next" data-icon="next" title="Successivo"></button>
       </div>
       <div class="row" style="margin-top:10px">
         <span class="muted">Volume</span>
@@ -168,6 +172,9 @@ canvas.vu{width:22px;height:230px}
 <div class="sheet" id="sheet"><div class="box"><h3><span id="sheet-title"></span><button id="sheet-close">✕</button></h3><div id="sheet-body"></div></div></div>
 <script>
 const $ = s => document.querySelector(s);
+const ICON = {"play": "<path d=\"M7 4.5 19.5 12 7 19.5z\"/>", "pause": "<rect x=\"6\" y=\"5\" width=\"4.2\" height=\"14\" rx=\"1\"/><rect x=\"13.8\" y=\"5\" width=\"4.2\" height=\"14\" rx=\"1\"/>", "stop": "<rect x=\"6\" y=\"6\" width=\"12\" height=\"12\" rx=\"1.5\"/>", "prev": "<rect x=\"5\" y=\"5.5\" width=\"2.6\" height=\"13\" rx=\"1\"/><path d=\"M19 5.5 8.5 12 19 18.5z\"/>", "next": "<rect x=\"16.4\" y=\"5.5\" width=\"2.6\" height=\"13\" rx=\"1\"/><path d=\"M5 5.5 15.5 12 5 18.5z\"/>", "youtube": "<rect x=\"2\" y=\"5\" width=\"20\" height=\"14\" rx=\"4\" fill=\"#e5534b\"/><path d=\"M10 8.5 15.5 12 10 15.5z\" fill=\"#fff\"/>", "now": "<g fill=\"#f2a93b\"><rect x=\"5\" y=\"11\" width=\"3.4\" height=\"8\" rx=\"1\"/><rect x=\"10.3\" y=\"5\" width=\"3.4\" height=\"14\" rx=\"1\"/><rect x=\"15.6\" y=\"9\" width=\"3.4\" height=\"10\" rx=\"1\"/></g>"};
+const svg = (n, sz = 26) => `<svg viewBox="0 0 24 24" width="${sz}" height="${sz}" fill="currentColor" aria-hidden="true">${ICON[n]}</svg>`;
+document.querySelectorAll("[data-icon]").forEach(b => b.innerHTML = svg(b.dataset.icon, b.classList.contains("big") ? 32 : 26));
 let S = null, page = null, seeking = false, dragging = {};
 const fmt = s => { if (s == null) return "--:--"; s = Math.max(0, Math.floor(s));
   const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = String(s%60).padStart(2,"0");
@@ -250,7 +257,8 @@ function renderPlayer(){
   $("#np-title").textContent = P.title || "Nessun brano";
   const st = {playing:"In riproduzione", loading:"Caricamento…", paused:"In pausa", stopped:"Fermo"}[P.state] || "";
   $("#np-sub").textContent = P.title ? `${st}${P.kind === "youtube" ? " · YouTube" : ""}` : "Aggiungi un link YouTube qui sotto";
-  $("#pp").textContent = (P.state === "playing" || P.state === "loading") ? "⏸" : "▶";
+  const ppIcon = (P.state === "playing" || P.state === "loading") ? "pause" : "play";
+  if ($("#pp").dataset.icon !== ppIcon){ $("#pp").dataset.icon = ppIcon; $("#pp").innerHTML = svg(ppIcon, 32); }
   $("#t-pos").textContent = fmt(P.position); $("#t-dur").textContent = fmt(P.duration);
   if (!seeking) $("#seek").value = P.duration ? Math.round(P.position / P.duration * 1000) : 0;
   if (!dragging.player) $("#pvol").value = Math.round(P.volume_db * 10);
@@ -260,8 +268,8 @@ function renderPlayer(){
     q.dataset.sig = qsig; q.innerHTML = "";
     if (!P.queue.length) q.innerHTML = '<li class="muted">Coda vuota</li>';
     P.queue.forEach((t, i) => { const li = document.createElement("li"); if (i === P.index) li.className = "cur";
-      li.innerHTML = `<span></span><span class="time">${fmt(t.duration)}</span>`;
-      li.firstChild.textContent = (i === P.index ? "▶ " : "") + (t.kind === "youtube" ? "📺 " : "") + t.title;
+      li.innerHTML = `<i class="qi">${i === P.index ? svg("now", 18) : t.kind === "youtube" ? svg("youtube", 18) : ""}</i><span></span><span class="time">${fmt(t.duration)}</span>`;
+      li.children[1].textContent = t.title;
       li.onclick = () => send({cmd:"player", action:"play", index:i}); q.appendChild(li); });
   }
 }
@@ -277,12 +285,18 @@ function buildStrip(s){
   el.innerHTML = `<div class="mtitle"></div><div class="sect">INSERTI</div><ul class="ins"></ul>
     <div class="itools"><button data-a="add" title="Aggiungi">+</button><button data-a="remove" title="Togli">−</button>
     <button data-a="up" title="Su">▲</button><button data-a="down" title="Giù">▼</button><button data-a="edit" title="Parametri">✎</button></div>
+    ${s.id === "mic" ? `<div class="sect">INGRESSO</div><select class="inp"></select>
+      <label class="tobot"><input type="checkbox"> Anche al bot Discord</label>` : ""}
     ${s.id === "monitor" ? `<div class="sect">ASCOLTA</div><div class="hear">${HEAR.map(([k,l]) => `<label><input type="checkbox" data-h="${k}"> ${l}</label>`).join("")}</div>` : ""}
-    <div class="fm"><div class="fader"><div class="track"></div><div class="fill"></div><div class="thumb"></div></div><canvas class="vu" width="44" height="460"></canvas></div>
+    <div class="fm"><div class="fader"><div class="track"></div><div class="fill"></div><div class="thumb"></div></div><canvas class="vu" width="96" height="460"></canvas></div>
     <div class="db"></div><button class="mute">MUTE</button>`;
   el.querySelector(".mtitle").textContent = s.name;
   el.querySelector(".mute").onclick = () => send({cmd:"strip", id:s.id, mute: !strip(s.id).mute});
   el.querySelectorAll("[data-h]").forEach(c => c.onchange = () => send({cmd:"monitor", [c.dataset.h]: c.checked}));
+  if (s.id === "mic"){
+    el.querySelector(".inp").onchange = e => send({cmd:"mic", input: e.target.value});
+    el.querySelector(".tobot input").onchange = e => send({cmd:"mic", to_bot: e.target.checked});
+  }
   el.querySelectorAll("[data-a]").forEach(b => b.onclick = () => insertAction(s.id, b.dataset.a));
   setupFader(el, s.id);
   return el;
@@ -333,6 +347,18 @@ function renderMixer(){
         ul.appendChild(li); });
     }
     if (s.id === "monitor" && S.monitor) el.querySelectorAll("[data-h]").forEach(c => c.checked = !!S.monitor[c.dataset.h]);
+    if (s.id === "mic" && S.mic){
+      const sel = el.querySelector(".inp"), opts = JSON.stringify([S.mic.inputs, S.mic.input]);
+      if (sel.dataset.sig !== opts && document.activeElement !== sel){
+        sel.dataset.sig = opts; sel.innerHTML = "";
+        const add = (v, t) => { const o = document.createElement("option"); o.value = v; o.textContent = t; sel.appendChild(o); };
+        add("", "— nessuno —");
+        S.mic.inputs.forEach(n => add(n, n));
+        if (S.mic.input && !S.mic.inputs.includes(S.mic.input)) add(S.mic.input, S.mic.input + " (non trovato)");
+        sel.value = S.mic.input || "";
+      }
+      el.querySelector(".tobot input").checked = !!S.mic.to_bot;
+    }
   });
   const B = S.bot, chip = $("#botchip");
   chip.textContent = !B.available ? "🤖 non disponibile" : B.channel ? `🤖 ${B.channel}` : B.online ? "🤖 online" : B.running ? "🤖 connessione…" : "🤖 spento";
@@ -404,8 +430,9 @@ async function openParams(id, i){
 
 // Meter: canali del mixer e pad, ~8 volte al secondo
 const padAnim = {};
+const VU_TICKS = [6, 0, -6, -12, -18, -24, -36, -48, -60];
 function drawVu(cv, l, r, hl, hr){
-  const c = cv.getContext("2d"), W = cv.width, H = cv.height, bw = W/2 - 3;
+  const c = cv.getContext("2d"), W = cv.width, H = cv.height, BW = 44, bw = BW/2 - 3;
   c.clearRect(0, 0, W, H);
   [[l, hl], [r, hr]].forEach(([lv, hd], k) => { const x = k * (bw + 6);
     c.fillStyle = "#15171c"; c.fillRect(x, 0, bw, H);
@@ -413,6 +440,14 @@ function drawVu(cv, l, r, hl, hr){
     g.addColorStop(0, "#3ec7b2"); g.addColorStop(vuFrac(-12), "#3ec7b2"); g.addColorStop(vuFrac(-3), "#e3c84b"); g.addColorStop(vuFrac(0), "#e5534b");
     c.fillStyle = g; c.fillRect(x, H - h, bw, h);
     if (hd > VU_MIN + 1){ c.fillStyle = hd < 0 ? "#e6e8ee" : "#e5534b"; c.fillRect(x, H - vuFrac(hd) * H - 2, bw, 3); } });
+  // scala in dB, come nel programma
+  c.font = "18px ui-monospace,Consolas,monospace"; c.textBaseline = "middle";
+  let lastY = -100;
+  VU_TICKS.forEach(db => { const y = Math.round(H - vuFrac(db) * H);
+    c.fillStyle = db === 0 ? "#8b92a3" : "rgba(38,42,51,.75)"; c.fillRect(0, y, BW, 2);
+    c.fillStyle = "#8b92a3"; c.fillRect(BW + 2, y, 8, 2);
+    if (Math.abs(y - lastY) >= 20){ c.fillStyle = db === 0 ? "#e6e8ee" : "#8b92a3";
+      c.fillText(db <= VU_MIN ? "-∞" : (db > 0 ? "+" + db : String(db)), BW + 13, Math.min(Math.max(y, 10), H - 10)); lastY = y; } });
 }
 async function pollLevels(){
   if (document.hidden || !S) return;

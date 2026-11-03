@@ -73,6 +73,7 @@ class AudioEngine:
         self.sounds = ChannelStrip("sounds", "Soundboard", gain_db=-6.0)
         self.tts = ChannelStrip("tts", "Sintesi vocale", gain_db=-3.0)
         self.monitor_hear_tts = True
+        self.mic_to_bot = False           # il canale Microfono va anche al bot Discord
         self.player_strip = ChannelStrip("player", "Player", gain_db=-12.0)
         self.player = Player(sample_rate)
         self.monitor_hear_player = True
@@ -123,6 +124,8 @@ class AudioEngine:
             self._voices = [] if key is None else [v for v in self._voices if v.key != key]
 
     def has_active_sounds(self) -> bool:
+        if self.mic_to_bot:
+            return True                   # il microfono è sempre «attivo»: il bot non va in pausa
         with self._voices_lock:
             if any(not v.preview for v in self._voices):
                 return True
@@ -193,7 +196,7 @@ class AudioEngine:
         say = self.tts.process(speech, sr)
         ply = self.player_strip.process(self.player.read(frames), sr)
         if self.bot_streaming:
-            self.bot_ring.write(snd + say + ply)
+            self.bot_ring.write(snd + say + ply + mic if self.mic_to_bot else snd + say + ply)
         master = self.master.process(mic + snd + say + ply if self.sounds_to_master else mic, sr)
 
         mon_in = np.zeros((2, frames), dtype=np.float32)
@@ -350,6 +353,7 @@ class AudioEngine:
         d["monitor"]["hear_mic"] = self.monitor_hear_mic
         d["monitor"]["hear_player"] = self.monitor_hear_player
         d["monitor"]["hear_tts"] = self.monitor_hear_tts
+        d["mic"]["to_bot"] = self.mic_to_bot
         return d
 
     def load_dict(self, d: dict) -> list[str]:
@@ -362,6 +366,7 @@ class AudioEngine:
         self.monitor_hear_mic = bool(mon.get("hear_mic", False))
         self.monitor_hear_player = bool(mon.get("hear_player", True))
         self.monitor_hear_tts = bool(mon.get("hear_tts", True))
+        self.mic_to_bot = bool(d.get("mic", {}).get("to_bot", False))
         return errors
 
 

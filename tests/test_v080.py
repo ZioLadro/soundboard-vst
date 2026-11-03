@@ -215,7 +215,8 @@ def test_mio_suono_sets_own_and_needs_rights_for_others(cmds):
     it.user.display_name = "Mario"
     cmds.bot.state["library"] = [{"key": "tromba.wav", "label": "Tromba", "emoji": ""}]
     asyncio.run(slash(cmds, "mio-suono").callback(it, entrata="Tromba", uscita="-"))
-    assert cmds.bot.sent[-1] == {"cmd": "set_greeting", "user": "7", "name": "Mario", "join": "tromba.wav", "leave": ""}
+    assert cmds.bot.sent[-1] == {"cmd": "set_greeting", "user": "7", "name": "Mario", "join": "tromba.wav", "leave": "",
+                                 "mute": None, "unmute": None}
     other = SimpleNamespace(id=8, display_name="Luigi", bot=False)
     it2 = interaction(7)
     asyncio.run(slash(cmds, "mio-suono").callback(it2, entrata="Tromba", utente=other))
@@ -351,7 +352,7 @@ def test_settings_tabs_for_permissions_and_greetings(win):
     dc = win.config.data["discord"]
     assert dc["permissions"]["groups"]["musica"]["roles"] == ["55"]
     assert dc["permissions"]["groups"]["controllo"]["everyone"] is True
-    assert dc["greetings"]["users"]["7"] == {"name": "Mario", "join": "applausi.wav", "leave": ""}
+    assert dc["greetings"]["users"]["7"] == {"name": "Mario", "join": "applausi.wav", "leave": "", "mute": "", "unmute": ""}
     assert dc["greetings"]["announce"]["enabled"] is True
     assert dc["commands"] == {"enabled": True}
     dlg.deleteLater()

@@ -5,7 +5,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QSize, QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
@@ -17,6 +17,7 @@ from .. import eventlog
 from .. import youtube
 from ..audio.mixer import MAX_DB, MIN_DB
 from ..audio.player import AUDIO_EXTENSIONS, Player, Track, format_time, probe_duration, read_m3u, write_m3u
+from . import icons
 from . import theme
 from .meter import format_db
 
@@ -81,20 +82,22 @@ class PlayerView(QWidget):
         srow.addWidget(self.seek, 1)
         srow.addWidget(self.total)
 
-        def tbtn(text, tip, fn, big=False):
-            b = QToolButton(text=text)
+        def tbtn(name, tip, fn, big=False):
+            b = QToolButton()
+            b.setIcon(icons.icon(name))
+            b.setIconSize(QSize(30, 30) if big else QSize(22, 22))
             b.setToolTip(tip)
             b.clicked.connect(fn)
-            b.setStyleSheet("font-size: 18pt; padding: 2px 14px;" if big else "font-size: 14pt; padding: 2px 10px;")
+            b.setStyleSheet("padding: 4px 14px;" if big else "padding: 4px 10px;")
             b.setMinimumSize(56 if big else 44, 40)
             return b
 
-        self.prev_btn = tbtn("⏮", "Precedente", player.prev)
-        self.play_btn = tbtn("▶", "Play / Pausa (spazio)", self._toggle, big=True)
-        self.stop_btn = tbtn("⏹", "Stop", player.stop)
-        self.next_btn = tbtn("⏭", "Successivo", player.next)
-        self.repeat_btn = tbtn("🔁", "Ripeti: no", self._cycle_repeat)
-        self.shuffle_btn = tbtn("🔀", "Casuale", self._toggle_shuffle)
+        self.prev_btn = tbtn("prev", "Precedente", player.prev)
+        self.play_btn = tbtn("play", "Play / Pausa (spazio)", self._toggle, big=True)
+        self.stop_btn = tbtn("stop", "Stop", player.stop)
+        self.next_btn = tbtn("next", "Successivo", player.next)
+        self.repeat_btn = tbtn("repeat", "Ripeti: no", self._cycle_repeat)
+        self.shuffle_btn = tbtn("shuffle", "Casuale", self._toggle_shuffle)
         self.shuffle_btn.setCheckable(True)
         self.volume = QSlider(Qt.Orientation.Horizontal)
         self.volume.setRange(int(MIN_DB * 10), int(MAX_DB * 10))
@@ -185,7 +188,7 @@ class PlayerView(QWidget):
         self.results.itemDoubleClicked.connect(lambda it: self._add_results([it], play=True))
         add_sel = QPushButton("Aggiungi selezionati")
         add_sel.clicked.connect(lambda: self._add_results(self.results.selectedItems()))
-        play_now = QPushButton("▶ Riproduci subito")
+        play_now = QPushButton(icons.icon("play"), "Riproduci subito")
         play_now.clicked.connect(lambda: self._add_results(self.results.selectedItems()[:1], play=True))
         close_res = QToolButton(text="✕")
         close_res.clicked.connect(lambda: self.results_panel.hide())
@@ -230,9 +233,13 @@ class PlayerView(QWidget):
         self.queue.blockSignals(True)
         self.queue.clear()
         for i, t in enumerate(self.player.tracks):
-            mark = "▶  " if i == self.player.index else ""
-            icon = "📺 " if t.kind == "youtube" else ""
-            it = QListWidgetItem(f"{mark}{icon}{t.title}    {format_time(t.duration)}")
+            it = QListWidgetItem(f"{t.title}    {format_time(t.duration)}")
+            if i == self.player.index:
+                it.setIcon(icons.icon("now"))
+            elif t.kind == "youtube":
+                it.setIcon(icons.icon("youtube"))
+            else:
+                it.setIcon(icons.icon("blank"))     # allinea i titoli
             it.setData(INDEX_ROLE, i)
             it.setToolTip(t.source)
             if i == self.player.index:
@@ -250,7 +257,7 @@ class PlayerView(QWidget):
     def _refresh_now(self) -> None:
         t = self.player.current
         st = self.player.state
-        self.play_btn.setText("⏸" if st in ("playing", "loading") else "▶")
+        self.play_btn.setIcon(icons.icon("pause" if st in ("playing", "loading") else "play"))
         if t is None:
             self.title.setText("Nessun brano")
             self.subtitle.setText("Aggiungi file, cartelle, link o playlist di YouTube")
@@ -302,7 +309,7 @@ class PlayerView(QWidget):
                 self._prefetch_next()
                 cur = self.player.current
                 if cur is not None:
-                    eventlog.log(eventlog.PLAYER, f"▶ In riproduzione: {cur.title}", "")
+                    eventlog.log(eventlog.PLAYER, f"In riproduzione: {cur.title}", "")
             self.refresh()
             self.changed.emit()
         else:
@@ -350,13 +357,16 @@ class PlayerView(QWidget):
 
     def _update_mode_buttons(self) -> None:
         r = self.player.repeat
-        self.repeat_btn.setText("🔂" if r == "one" else "🔁")
+        on_color = "#10221f"                       # icona scura sul pulsante acceso (verde acqua)
+        self.repeat_btn.setIcon(icons.icon("repeat_one" if r == "one" else "repeat",
+                                           on_color if r != "off" else theme.TEXT))
         self.repeat_btn.setToolTip({"off": "Ripeti: no", "all": "Ripeti: tutta la coda", "one": "Ripeti: brano"}[r])
-        self.repeat_btn.setStyleSheet("font-size: 14pt; padding: 2px 10px;" +
-                                      (f"background: {theme.ACCENT_2}; color: #10221f;" if r != "off" else ""))
+        self.repeat_btn.setStyleSheet("padding: 4px 10px;" +
+                                      (f"background: {theme.ACCENT_2};" if r != "off" else ""))
         self.shuffle_btn.setChecked(self.player.shuffle)
-        self.shuffle_btn.setStyleSheet("font-size: 14pt; padding: 2px 10px;" +
-                                       (f"background: {theme.ACCENT_2}; color: #10221f;" if self.player.shuffle else ""))
+        self.shuffle_btn.setIcon(icons.icon("shuffle", on_color if self.player.shuffle else theme.TEXT))
+        self.shuffle_btn.setStyleSheet("padding: 4px 10px;" +
+                                       (f"background: {theme.ACCENT_2};" if self.player.shuffle else ""))
 
     def showEvent(self, event):
         self._update_mode_buttons()
@@ -445,7 +455,7 @@ class PlayerView(QWidget):
         self._set_status(f"{len(tracks)} risultati: doppio clic per riprodurre, oppure selezionali e aggiungili.")
         self.results.clear()
         for t in tracks:
-            it = QListWidgetItem(f"📺 {t.title}    {format_time(t.duration)}")
+            it = QListWidgetItem(icons.icon("youtube"), f"{t.title}    {format_time(t.duration)}")
             it.setData(TRACK_ROLE, t)
             it.setToolTip(t.source)
             self.results.addItem(it)
@@ -511,7 +521,7 @@ class PlayerView(QWidget):
         i = item.data(INDEX_ROLE)
         t = self.player.tracks[i]
         m = QMenu(self)
-        m.addAction("▶  Riproduci", lambda: self.player.play(i))
+        m.addAction(icons.icon("play"), "Riproduci", lambda: self.player.play(i))
         if t.kind == "youtube":
             m.addAction("Apri su YouTube", lambda: QDesktopServices.openUrl(QUrl(t.source)))
         m.addSeparator()

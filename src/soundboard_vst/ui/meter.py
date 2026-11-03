@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QLinearGradient, QPainter
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter
 from PySide6.QtWidgets import QSlider, QWidget
 
 from ..audio.mixer import MAX_DB, MIN_DB
@@ -13,6 +13,8 @@ from . import theme
 
 METER_MIN_DB = -60.0
 METER_MAX_DB = 6.0
+METER_TICKS = (6, 0, -6, -12, -18, -24, -36, -48, -60)   # tacche della scala in dB
+BARS_W = 22                                              # larghezza delle due barre; a destra la scala
 
 
 def _norm(db: float) -> float:
@@ -24,7 +26,7 @@ class LevelMeter(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(22)
+        self.setFixedWidth(BARS_W + 26)
         self.setMinimumHeight(120)
         self._level = [METER_MIN_DB, METER_MIN_DB]
         self._hold = [METER_MIN_DB, METER_MIN_DB]
@@ -48,7 +50,7 @@ class LevelMeter(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         h = self.height()
-        bar_w = (self.width() - 3) / 2
+        bar_w = (BARS_W - 3) / 2
         grad = QLinearGradient(0, h, 0, 0)
         grad.setColorAt(0.0, QColor(theme.ACCENT_2))
         grad.setColorAt(_norm(-12), QColor(theme.ACCENT_2))
@@ -67,9 +69,27 @@ class LevelMeter(QWidget):
                 y = h - _norm(self._hold[i]) * h
                 p.setBrush(QColor(theme.TEXT if self._hold[i] < 0 else theme.DANGER))
                 p.drawRect(QRectF(x, y, bar_w, 2))
-        # tacca 0 dB
-        p.setBrush(QColor(theme.MUTED))
-        p.drawRect(QRectF(0, h - _norm(0) * h, self.width(), 1))
+        # scala in dB: linee leggere sulle barre, tacche ed etichette a destra
+        font = QFont(self.font())
+        font.setPixelSize(max(8, min(10, int(h / 26))))
+        p.setFont(font)
+        fm = p.fontMetrics()
+        last_y = -100.0
+        for db in METER_TICKS:
+            y = h - _norm(db) * h
+            line = QColor(theme.PANEL_2 if db != 0 else theme.MUTED)
+            line.setAlpha(170 if db else 255)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(line)
+            p.drawRect(QRectF(0, y, BARS_W, 1))
+            p.setBrush(QColor(theme.MUTED))
+            p.drawRect(QRectF(BARS_W + 1, y, 4, 1))
+            if abs(y - last_y) >= fm.height() * 0.9:          # niente etichette sovrapposte
+                text = "-∞" if db <= METER_MIN_DB else (f"+{db}" if db > 0 else str(db))
+                ty = min(max(y + fm.ascent() / 2 - 1, fm.ascent()), h - 1)
+                p.setPen(QColor(theme.TEXT if db == 0 else theme.MUTED))
+                p.drawText(QPointF(BARS_W + 7, ty), text)
+                last_y = y
 
 
 class DbFader(QSlider):

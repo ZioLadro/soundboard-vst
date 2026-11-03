@@ -292,7 +292,8 @@ def search_sounds(state: dict, text: str, limit: int = 25) -> list[dict]:
     if not t:
         return items[:limit]
     starts = [s for s in items if s["label"].lower().startswith(t) or s["key"].lower().startswith(t)]
-    inside = [s for s in items if s not in starts and (t in s["label"].lower() or t in s["key"].lower())]
+    inside = [s for s in items if s not in starts and (t in s["label"].lower() or t in s["key"].lower()
+                                                       or t in (s.get("category") or "").lower())]
     return (starts + inside)[:limit]
 
 
@@ -701,23 +702,28 @@ class Commands:
         async def greeting_autocomplete(interaction, current: str):
             return greeting_choices(current)
 
-        @tree.command(name="mio-suono", description="Sceglie il suono che parte quando entri o esci dal canale vocale")
+        @tree.command(name="mio-suono",
+                      description="Sceglie i suoni quando entri, esci, ti muti o ti smuti nel canale vocale")
         @app_commands.describe(entrata="Suono quando entri («— niente —» per toglierlo)",
                                uscita="Suono quando esci («— niente —» per toglierlo)",
+                               muto="Suono quando spegni il microfono", smuto="Suono quando lo riaccendi",
                                utente="Per un'altra persona (serve il permesso di gestione)")
-        @app_commands.autocomplete(entrata=greeting_autocomplete, uscita=greeting_autocomplete)
+        @app_commands.autocomplete(entrata=greeting_autocomplete, uscita=greeting_autocomplete,
+                                   muto=greeting_autocomplete, smuto=greeting_autocomplete)
         @needs("suoni")
-        async def mio_suono(interaction, entrata: str = None, uscita: str = None, utente: discord.Member = None):
+        async def mio_suono(interaction, entrata: str = None, uscita: str = None, muto: str = None,
+                            smuto: str = None, utente: discord.Member = None):
             target = utente or interaction.user
             if target.id != interaction.user.id and not cmds.can(interaction, "gestione"):
                 return await cmds.deny(interaction, "gestione")
-            if entrata is None and uscita is None:
+            if entrata is None and uscita is None and muto is None and smuto is None:
                 entry = cmds.bot.greetings.get("users", {}).get(str(target.id), {})
                 state = cmds.bot.get_state()
                 names = {s["key"]: s["label"] for s in state.get("library", [])}
                 show = lambda k: f"**{names.get(k, k)}**" if k else "niente"
                 return await cmds._reply(interaction, f"Per {target.display_name}: entrata {show(entry.get('join'))}, "
-                                                      f"uscita {show(entry.get('leave'))}.")
+                                                      f"uscita {show(entry.get('leave'))}, muto {show(entry.get('mute'))}, "
+                                                      f"smuto {show(entry.get('unmute'))}.")
             state = cmds.bot.get_state()
 
             def pick(value):
@@ -728,13 +734,14 @@ class Commands:
                 s = resolve_sound(state, value)
                 return s["key"] if s else False
 
-            join, leave = pick(entrata), pick(uscita)
-            if join is False or leave is False:
+            join, leave, mute, unmute = pick(entrata), pick(uscita), pick(muto), pick(smuto)
+            if False in (join, leave, mute, unmute):
                 return await cmds._reply(interaction, "❌ Suono non trovato: scegli tra i suggerimenti.")
             cmds.bot.remember_user(target)
             await interaction.response.defer(ephemeral=True, thinking=True)
             ok, msg = await cmds.ask(interaction, {"cmd": "set_greeting", "user": str(target.id),
-                                                   "name": target.display_name, "join": join, "leave": leave}, 30)
+                                                   "name": target.display_name, "join": join, "leave": leave,
+                                                   "mute": mute, "unmute": unmute}, 30)
             await interaction.followup.send(msg, ephemeral=True)
 
         @tree.command(name="aiuto", description="Elenco dei comandi della soundboard")

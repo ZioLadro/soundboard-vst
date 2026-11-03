@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import math
 import threading
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
@@ -35,6 +36,7 @@ class RemoteController(QObject):
         self.w = window
         self._state: dict = {}
         self.levels: dict = {"strips": {}, "pads": {}}      # aggiornati dalla finestra ~30 volte al secondo
+        self._inputs: tuple[float, list[str]] = (0.0, [])
         self.server = RemoteServer(lambda: self._state, self.command.emit, self._image_for,
                                    get_levels=lambda: self.levels, query=self.query)
         self.command.connect(self._run)
@@ -116,6 +118,14 @@ class RemoteController(QObject):
         finally:
             done.set()
 
+    def _input_names(self, refresh: bool = False) -> list[str]:
+        """Ingressi audio, ricordati per 10 s (interrogare la scheda audio 4 volte al secondo è inutile)."""
+        t, names = self._inputs
+        if refresh or time.monotonic() - t > 10:
+            names = self.w.input_names()
+            self._inputs = (time.monotonic(), names)
+        return names
+
     def _effects(self) -> dict:
         return {"builtin": [{"type": t, "label": label} for t, (label, _) in BUILTIN_EFFECTS.items()],
                 "vst": [{"path": str(p), "name": p.stem} for p in self.w.vst_plugins()]}
@@ -172,8 +182,8 @@ class RemoteController(QObject):
                         "duration": round(activity[key][2], 2) if key in activity else None,
                     }
             pages.append({"name": pg.name, "pads": pads})
-        library = [{"key": key, "label": board.display_name(key), "emoji": board._emoji(key)}
-                   for key in board.all_keys()]
+        library = [{"key": key, "label": board.display_name(key), "emoji": board._emoji(key),
+                    "category": board.category_of(key)} for key in board.all_keys()]
         p = eng.player
         cur = p.current
         bot = w.bot
@@ -190,6 +200,8 @@ class RemoteController(QObject):
             "strips": [{"id": s.id, "name": s.name, "gain_db": s.gain_db, "mute": s.mute,
                         "inserts": [{"name": slot.display_name, "kind": slot.kind, "bypass": slot.bypass,
                                      "failed": slot.failed} for slot in s.inserts]} for s in eng.strips],
+            "mic": {"inputs": self._input_names(), "input": w.config.data["audio"].get("input_device", ""),
+                    "to_bot": eng.mic_to_bot},
             "monitor": {"hear_sounds": eng.monitor_hear_sounds, "hear_tts": eng.monitor_hear_tts,
                         "hear_player": eng.monitor_hear_player, "hear_mic": eng.monitor_hear_mic},
             "bot": {"available": discord_bot.available(), "running": bot.running, "online": bot.status.online,
@@ -228,19 +240,21 @@ class RemoteController(QObject):
                                str(c.get("end") or ""), local=local, done=done, who=eventlog.current_actor())
             elif cmd == "set_greeting":
                 done = c.get("_done") if callable(c.get("_done")) else None
-                join, leave = c.get("join"), c.get("leave")
-                for k in (join, leave):
+                join, leave, mute, unmute = c.get("join"), c.get("leave"), c.get("mute"), c.get("unmute")
+                for k in (join, leave, mute, unmute):
                     if k and not w.board.exists(k):
                         if done:
                             done(False, "❌ Suono non trovato nella soundboard.")
                         return
-                entry = w.set_greeting(str(c.get("user")), str(c.get("name") or ""), join, leave)
+                entry = w.set_greeting(str(c.get("user")), str(c.get("name") or ""), join, leave, mute, unmute)
                 describe = lambda k: f"**{w.board.display_name(k)}**" if k else "niente"
-                eventlog.log(eventlog.DISCORD, f"Suoni di {entry['name']}: entrata {w.board.display_name(entry['join']) if entry['join'] else '—'}, "
-                             f"uscita {w.board.display_name(entry['leave']) if entry['leave'] else '—'}")
+                plain = lambda k: w.board.display_name(k) if k else "—"
+                eventlog.log(eventlog.DISCORD, f"Suoni di {entry['name']}: entrata {plain(entry['join'])}, uscita "
+                             f"{plain(entry['leave'])}, muto {plain(entry['mute'])}, smuto {plain(entry['unmute'])}")
                 if done:
-                    done(True, f"Fatto: quando {entry['name']} entra suona {describe(entry['join'])}, "
-                               f"quando esce {describe(entry['leave'])}.")
+                    done(True, f"Fatto, per {entry['name']}: entra → {describe(entry['join'])}, esce → "
+                               f"{describe(entry['leave'])}, si muta → {describe(entry['mute'])}, "
+                               f"si smuta → {describe(entry['unmute'])}.")
             elif cmd == "say":
                 text = str(c.get("text", ""))[:300]
                 if text.strip():
@@ -268,6 +282,13 @@ class RemoteController(QObject):
                 w.schedule_save()
             elif cmd == "insert":
                 self._insert(c)
+            elif cmd == "mic":
+                if "to_bot" in c and hasattr(w.mixer, "mic_to_bot"):
+                    w.mixer.mic_to_bot.setChecked(bool(c["to_bot"]))   # come il clic nel mixer del PC
+                if "input" in c:
+                    name = str(c["input"])
+                    if name == "" or name in self._input_names(refresh=True):
+                        w.set_input_device(name)
             elif cmd == "monitor":
                 for key in ("hear_sounds", "hear_tts", "hear_player", "hear_mic"):
                     if key in c:

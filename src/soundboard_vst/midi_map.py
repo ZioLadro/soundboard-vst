@@ -87,10 +87,27 @@ def cc_to_db(value: int) -> float:
     return max(MIN_DB, min(MAX_DB, 20.0 * math.log10(gain)))
 
 
+PARAM_PREFIX = "param:"
+
+
+def param_target(uid: str, name: str) -> str:
+    """Destinazione per un parametro di un inserto: «param:<id dell'inserto>:<parametro>»."""
+    return f"{PARAM_PREFIX}{uid}:{name}"
+
+
+def parse_param_target(tid: str) -> tuple[str, str] | None:
+    if not tid.startswith(PARAM_PREFIX):
+        return None
+    uid, _, name = tid[len(PARAM_PREFIX):].partition(":")
+    return (uid, name) if uid and name else None
+
+
 def targets_for(mapping: dict[str, dict], event: MidiEvent) -> list[Target]:
     found = []
     for tid, binding in mapping.items():
         t = TARGETS_BY_ID.get(tid)
+        if t is None and tid.startswith(PARAM_PREFIX):
+            t = Target(tid, "Parametri degli inserti", tid, "continuous")
         if t is not None and matches(binding, event):
             found.append(t)
     return found

@@ -14,7 +14,8 @@ la tua voce **più** i suoni, già mixati ed elaborati.
   - Trascina un pad su un altro per spostarli o scambiarli; clic su uno slot vuoto per assegnargli un suono.
   - Cartella predefinita `Musica\Suoni`, oppure una a scelta. I file nuovi (aggiunti, trascinati dall'esplora risorse o scaricati) finiscono nel primo pad libero.
   - Mentre un suono suona, il pad mostra l'**avanzamento** (barra in basso) e il **livello** (meter a destra).
-  - Tasto destro su un pad → *Personalizza…*: **nome sul pad**, **immagine**, volume (0–200%), **inizio, fine e dissolvenze** (sulla forma d'onda), **colore** (12 colori o uno a scelta), **icona emoji**, scorciatoia da tastiera e **nota MIDI**. Dallo stesso menu: togli dal pad, rinomina il file, sposta nel cestino.
+  - **Categorie**: in *Personalizza…* (o selezionando più suoni nella libreria → tasto destro) assegna una categoria; la libreria raggruppa i suoni per categoria e il menu sopra la ricerca mostra una sola categoria, quelli senza, o i suoni **con una certa emoji**. Tasto destro sul titolo di una categoria → *Nuova pagina con…* la mette tutta su una pagina di pad.
+  - Tasto destro su un pad → *Personalizza…*: **nome sul pad**, **categoria**, **immagine**, volume (0–200%), **inizio, fine e dissolvenze** (sulla forma d'onda), **colore** (12 colori o uno a scelta), **icona emoji**, scorciatoia da tastiera e **nota MIDI**. Dallo stesso menu: togli dal pad, rinomina il file, sposta nel cestino.
 - **Controller MIDI**: scegli il controller in Impostazioni → MIDI, poi su un suono premi **Impara** e suona una nota o un pad (note e controlli CC, con il canale). Opzionalmente la forza con cui premi (velocity) regola il volume.
   - «Sovrapponi» per far suonare lo stesso suono più volte insieme, «Stop tutto» per zittire tutto.
 - **Ricerca su [MyInstants](https://www.myinstants.com)** direttamente dall'app: cerca o sfoglia le tendenze, ascolta l'anteprima solo in cuffia (non arriva a Discord), e aggiungi il suono con un clic: viene scaricato nella cartella e messo su un pad.
@@ -30,7 +31,7 @@ la tua voce **più** i suoni, già mixati ed elaborati.
 - **Ingresso**: scegli microfono o scheda audio.
 - **Uscita verso Discord**: il mix va su un cavo audio virtuale, che gli altri programmi vedono come microfono.
 - **Monitor**: uscita separata per le cuffie, per sentire i suoni (e, se vuoi, te stesso).
-- **Mixer** (tab *Mixer*) con sei canali — Microfono, Soundboard, Sintesi vocale, Player, Master → Discord, Monitor — ognuno con fader in dB, mute, meter stereo e catena di inserti.
+- **Mixer** (tab *Mixer*) con sei canali — Microfono, Soundboard, Sintesi vocale, Player, Master → Discord, Monitor — ognuno con fader in dB, mute, meter stereo con scala in dB e catena di inserti. Sul canale Microfono si sceglie l'**ingresso** (microfono o scheda audio) e si può mandare la voce **anche al bot Discord**.
 - **Host VST3**: inserisci plugin VST3 in qualsiasi canale, riordinali, mettili in bypass, apri la loro interfaccia grafica o un editor parametri generico. Lo stato dei plugin viene salvato e ripristinato.
 - **Effetti integrati** (non serve installare nulla): noise gate, compressore, limiter, filtri, EQ, riverbero, delay, chorus, distorsione, guadagno e **pitch shifter** a bassa latenza (±12 semitoni, ~20 ms).
 - **Mappa MIDI**: volumi e mute di ogni canale, controlli del player, pad della pagina corrente, cambio pagina e bot assegnabili a potenziometri, fader e tasti del controller, con preset per **Nektar Impact LX25+**.
@@ -132,7 +133,8 @@ default: `Ctrl+Alt+B` avvia/ferma, `Ctrl+Alt+J` entra nel tuo canale, `Ctrl+Alt+
 disattiva «Segui me» (si cambiano in Impostazioni → Bot Discord). Si possono assegnare anche a tasti MIDI dalla mappa.
 
 Note:
-- Il bot trasmette i canali **Soundboard** e **Player** del mixer (inserti e fader compresi), non il microfono; l'anteprima di MyInstants resta solo in cuffia.
+- Il bot trasmette i canali **Soundboard**, **Sintesi vocale** e **Player** del mixer (inserti e fader compresi); l'anteprima di MyInstants resta solo in cuffia.
+- **Microfono al bot**: nel mixer, canale Microfono → *Anche al bot Discord*. La tua voce, con gli effetti del canale (es. il pitch shifter), arriva anche dal bot: utile per far «parlare» il bot. Se parli anche dal tuo Discord, chi ascolta ti sente due volte: in quel caso muta uno dei due. Con l'opzione attiva il bot resta sempre in trasmissione.
 - Con «Con il bot in canale, i suoni non passano dal microfono virtuale» (attivo di default) il canale non sente i suoni due volte.
 - **Latenza**: con «Bassa latenza: trasmissione continua» (attiva di default) il bot resta sempre in trasmissione e
   manda silenzio quando non suona niente, così i suoni partono subito (circa 20 ms di ritardo interno; il resto dipende
@@ -181,11 +183,11 @@ I colori dei pulsanti seguono quelli dei pad (rosso, verde, blu o grigio: Discor
 - Le impostazioni delle versioni precedenti («Chi può suonare/controllare» e ruolo) vengono convertite in automatico.
 - Se disattivi «Comandi da Discord» (scheda Bot Discord), il bot li toglie dai server.
 
-### Suoni di entrata e uscita
+### Suoni di entrata, uscita, muto e smuto
 
-Impostazioni → **Entrate e uscite**: quando qualcuno entra o esce dal canale vocale in cui c'è il bot, parte un suono (o una frase) della soundboard.
+Impostazioni → **Entrate e uscite**: quando qualcuno entra o esce dal canale vocale in cui c'è il bot, o **spegne o riaccende il microfono** (anche chi silenzia le cuffie conta come muto), parte un suono (o una frase) della soundboard.
 
-- Un suono per persona, oppure quello di **«Chiunque altro»**; se non c'è un suono, si può far annunciare dalla sintesi vocale («{nome} è entrato»).
+- Un suono per persona e per evento (entra, esce, si muta, si smuta), oppure quello di **«Chiunque altro»**; se non c'è un suono, si può far annunciare dalla sintesi vocale («{nome} è entrato»). Per muto e smuto l'annuncio è vuoto finché non scrivi un testo (es. «{nome} si è mutato»).
 - *Non ripetere prima di…* (30 s di default) evita la raffica quando qualcuno entra ed esce di continuo.
 - Ognuno può scegliere i propri da Discord con **`/mio-suono`**. Entrate e uscite finiscono anche nel Registro.
 
@@ -244,6 +246,8 @@ Ogni frase viene creata una volta sola e tenuta in una cache (`%APPDATA%\Soundbo
   Stop tutti i suoni, pagina precedente/successiva, **Pad 1–16 della pagina corrente**, e il bot (avvia/ferma,
   entra, esci, segui me).
 - Le assegnazioni della mappa hanno la precedenza sulle note dei singoli suoni.
+
+**Parametri degli inserti**: nel mixer apri i parametri di un inserto (✎ o tasto destro → *Parametri…*), premi **MIDI** accanto al parametro e muovi un potenziometro o un fader (CC) o suona una nota: da lì quel controllo muove il parametro (0–127 = dal minimo al massimo; per le note conta la forza). Il pulsante mostra il controllo assegnato (es. `CC 74 · ch 1`), ✕ lo toglie. L'assegnazione resta anche se sposti l'inserto nella catena.
 
 **Preset Nektar Impact LX25+** (preset 1 «GM Instrument», quello di fabbrica; valori dal manuale):
 

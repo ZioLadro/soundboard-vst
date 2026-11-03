@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QGridLayout, QLabel, QLineEdit, QMessageBox,
+    QDialog, QDialogButtonBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
     QScrollArea, QSlider, QVBoxLayout, QWidget,
 )
 
+from .. import midi_map
 from ..audio.plugins import InsertSlot
 
 STEPS = 1000
@@ -23,14 +24,89 @@ def _fmt(value: float, unit: str) -> str:
     return f"{txt} {unit}".strip()
 
 
+# Collegamento con la mappa MIDI: lo imposta la finestra principale (midi_label, midi_learn,
+# midi_learn_cancel, midi_clear). Senza, i pulsanti MIDI non compaiono.
+MIDI = None
+
+
+class MidiParamButton(QWidget):
+    """«MIDI» accanto a un parametro: impara il controllo da usare, ✕ lo toglie."""
+
+    def __init__(self, target_id: str, parent=None):
+        super().__init__(parent)
+        self.target_id = target_id
+        self.learn = QPushButton()
+        self.learn.setObjectName("small")
+        self.learn.setToolTip("Premi e muovi un potenziometro/fader (CC) o suona una nota del controller")
+        self.learn.clicked.connect(self._toggle)
+        self.clear = QPushButton("✕")
+        self.clear.setObjectName("small")
+        self.clear.setFixedWidth(26)
+        self.clear.setToolTip("Togli il controllo MIDI")
+        self.clear.clicked.connect(self._clear)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+        lay.addWidget(self.learn)
+        lay.addWidget(self.clear)
+        self._learning = False
+        self._show(MIDI.midi_label(target_id) if MIDI else "")
+
+    def _show(self, label: str) -> None:
+        self.learn.setText(label or "MIDI")
+        self.learn.setStyleSheet("" if not label else "color: #3ec7b2; font-weight: 600;")
+        self.clear.setVisible(bool(label))
+
+    def _toggle(self) -> None:
+        if MIDI is None:
+            return
+        if self._learning:
+            MIDI.midi_learn_cancel()
+            self._learning = False
+            self._show(MIDI.midi_label(self.target_id))
+            return
+        self._learning = True
+        self.learn.setText("Muovi…")
+        MIDI.midi_learn(self.target_id, self._done)
+
+    def _done(self, label: str) -> None:
+        self._learning = False
+        try:
+            self._show(label or MIDI.midi_label(self.target_id))
+        except RuntimeError:
+            pass                                   # finestra già chiusa
+
+    def _clear(self) -> None:
+        MIDI.midi_clear(self.target_id)
+        self._show("")
+
+
+def _follow(dialog: QDialog, rows) -> None:
+    """Gli slider seguono i valori cambiati da fuori (controller MIDI, pagina web)."""
+    def tick():
+        for slider, get in rows:
+            v = get()
+            if v is None or slider.isSliderDown():
+                continue
+            pos = int(round(max(0.0, min(1.0, v)) * STEPS))
+            if pos != slider.value():
+                slider.blockSignals(True)
+                slider.setValue(pos)
+                slider.blockSignals(False)
+    timer = QTimer(dialog, interval=150)
+    timer.timeout.connect(tick)
+    timer.start()
+
+
 class BuiltinParamsDialog(QDialog):
     """Slider per gli effetti integrati; le modifiche sono immediate."""
 
     def __init__(self, slot: InsertSlot, parent=None):
         super().__init__(parent)
         self.setWindowTitle(slot.display_name)
-        self.setMinimumWidth(380)
+        self.setMinimumWidth(560)
         grid = QGridLayout()
+        follow = []
         for row, spec in enumerate(slot.param_specs()):
             value = float(getattr(slot.plugin, spec.attr))
             label = QLabel(spec.label)
@@ -39,6 +115,7 @@ class BuiltinParamsDialog(QDialog):
             readout.setMinimumWidth(70)
             slider = QSlider(Qt.Orientation.Horizontal)
             slider.setRange(0, STEPS)
+            slider.setMinimumWidth(220)
             span = spec.maximum - spec.minimum
             slider.setValue(int(round((value - spec.minimum) / span * STEPS)))
 
@@ -51,7 +128,17 @@ class BuiltinParamsDialog(QDialog):
             grid.addWidget(label, row, 0)
             grid.addWidget(slider, row, 1)
             grid.addWidget(readout, row, 2)
+            if MIDI is not None:
+                grid.addWidget(MidiParamButton(midi_map.param_target(slot.uid, spec.attr)), row, 3)
+
+            def get(spec=spec, readout=readout):
+                v = slot.get_normalized(spec.attr)
+                if v is not None:
+                    readout.setText(_fmt(spec.minimum + v * (spec.maximum - spec.minimum), spec.unit))
+                return v
+            follow.append((slider, get))
         grid.setColumnStretch(1, 1)
+        _follow(self, follow)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.accept)
         lay = QVBoxLayout(self)
@@ -67,6 +154,7 @@ class VstParamsDialog(QDialog):
         self.setWindowTitle(f"Parametri — {slot.display_name}")
         self.resize(480, 560)
         self._rows: list[tuple[str, list[QWidget]]] = []
+        follow = []
 
         search = QLineEdit()
         search.setPlaceholderText("Filtra parametri…")
@@ -102,8 +190,23 @@ class VstParamsDialog(QDialog):
             grid.addWidget(label, row, 0)
             grid.addWidget(slider, row, 1)
             grid.addWidget(readout, row, 2)
-            self._rows.append((name.lower(), [label, slider, readout]))
+            widgets = [label, slider, readout]
+            if MIDI is not None:
+                learn = MidiParamButton(midi_map.param_target(slot.uid, name))
+                grid.addWidget(learn, row, 3)
+                widgets.append(learn)
+            self._rows.append((name.lower(), widgets))
+
+            def get(param=param, readout=readout):
+                try:
+                    v = float(param.raw_value)
+                except Exception:
+                    return None
+                readout.setText(self._text(param))
+                return v
+            follow.append((slider, get))
         grid.setColumnStretch(1, 1)
+        _follow(self, follow)
         if not params:
             grid.addWidget(QLabel("Questo plugin non espone parametri."), 0, 0)
 
