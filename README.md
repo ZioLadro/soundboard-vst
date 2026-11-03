@@ -28,10 +28,12 @@ la tua voce **più** i suoni, già mixati ed elaborati.
 - **Nuovi suoni da YouTube** (o da MyInstants, da un link o da Discord con `/aggiungi-suono`), anche solo un pezzo.
 - **Registro** di tutto quello che succede: chi preme cosa (anche dalla pulsantiera di Discord), chi aggiunge musica, comandi, entrate e uscite, errori.
 - **Suoni di entrata e uscita** per chi entra o esce dal canale vocale del bot, e **permessi** del bot per ruoli e utenti.
-- **Ingresso**: scegli microfono o scheda audio.
+- **Ingressi**: microfono, scheda audio o più ingressi insieme (secondo microfono, strumento, linea), **mono o stereo**, ognuno con il suo canale nel mixer e un nome a scelta.
+- **ASIO** (Windows): schede audio professionali e Voicemeeter con i loro driver ASIO, ingressi e uscite su canali a scelta.
 - **Uscita verso Discord**: il mix va su un cavo audio virtuale, che gli altri programmi vedono come microfono.
 - **Monitor**: uscita separata per le cuffie, per sentire i suoni (e, se vuoi, te stesso).
-- **Mixer** (tab *Mixer*) con sei canali — Microfono, Soundboard, Sintesi vocale, Player, Master → Discord, Monitor — ognuno con fader in dB, mute, meter stereo con scala in dB e catena di inserti. Sul canale Microfono si sceglie l'**ingresso** (microfono o scheda audio) e si può mandare la voce **anche al bot Discord**.
+- **Mixer** (tab *Mixer*) con i canali d'ingresso (Microfono e quelli che aggiungi con **＋ Ingresso**), Soundboard, Sintesi vocale, Player, Master → Discord e Monitor — ognuno con fader in dB, **pan**, mute, meter stereo con scala in dB e catena di inserti; ingressi e sorgenti hanno anche il **SOLO**. Su ogni ingresso si scelgono dispositivo e canali (stereo o mono) e si può mandarlo **anche al bot Discord**.
+- **Pan dei singoli suoni**: in *Personalizza…* ogni suono può stare a sinistra, al centro o a destra.
 - **Host VST3**: inserisci plugin VST3 in qualsiasi canale, riordinali, mettili in bypass, apri la loro interfaccia grafica o un editor parametri generico. Lo stato dei plugin viene salvato e ripristinato.
 - **Effetti integrati** (non serve installare nulla): noise gate, compressore, limiter, filtri, EQ, riverbero, delay, chorus, distorsione, guadagno e **pitch shifter** a bassa latenza (±12 semitoni, ~20 ms).
 - **Mappa MIDI**: volumi e mute di ogni canale, controlli del player, pad della pagina corrente, cambio pagina e bot assegnabili a potenziometri, fader e tasti del controller, con preset per **Nektar Impact LX25+**.
@@ -41,14 +43,16 @@ la tua voce **più** i suoni, già mixati ed elaborati.
 ## Flusso del segnale
 
 ```
-Microfono ──► [Microfono: inserti → fader] ──┐
-                                             ├──► [Master → Discord: inserti → fader] ──► CABLE Input ──► Discord
-Suoni ──────► [Soundboard: inserti → fader] ─┤
-Player ─────► [Player: inserti → fader] ─────┘
+Microfono ───► [Microfono: inserti → fader → pan] ──┐
+Ingresso 2… ─► [Ingresso 2: inserti → fader → pan] ─┤
+                                                    ├──► [Master → Discord: inserti → fader] ──► CABLE Input ──► Discord
+Suoni ───────► [Soundboard: inserti → fader → pan] ─┤
+Player ──────► [Player: inserti → fader → pan] ─────┘
                      │                │
-                     └── Suoni / Player / Microfono (selezionabili) ──► [Monitor: inserti → fader] ──► cuffie
+                     └── Suoni / Player / ingressi (selezionabili) ──► [Monitor: inserti → fader] ──► cuffie
 
 Con il bot in canale, Soundboard e Player vanno al bot invece che al cavo virtuale.
+Con uno o più canali in SOLO, gli altri ingressi e sorgenti tacciono (Master e Monitor no).
 ```
 
 ## Installazione (Windows)
@@ -94,6 +98,33 @@ In Impostazioni c'è un pulsante che apre la pagina di download ufficiale.
 3. Consigliato in Discord: disattiva la **soppressione del rumore** (Krisp) e il **controllo automatico del guadagno**, che tendono a tagliare musica ed effetti. Il noise gate e il compressore puoi metterli tu sul canale Microfono.
 
 Lo stesso vale per qualsiasi altro programma: basta scegliere «CABLE Output» come microfono.
+
+## Più ingressi, mono e stereo
+
+Nel mixer, **＋ Ingresso** (a destra degli ingressi) aggiunge un canale d'ingresso: un secondo microfono, una
+chitarra, una tastiera, l'uscita di un mixer esterno. Per ogni ingresso:
+
+- **Dispositivo** e **canali**: *Stereo 1-2, 3-4…* oppure *Mono 1, 2, 3…* (un solo canale della scheda, messo al
+  centro: spostalo con il **pan**). Più ingressi mono possono usare canali diversi della stessa scheda: la scheda
+  si apre una volta sola.
+- **Nome**: doppio clic sul titolo del canale (o **⋯** → *Rinomina…*). **⋯** → *Togli ingresso* lo rimuove (il
+  Microfono resta sempre).
+- *Anche al bot Discord* e, nel canale Monitor, *Ascolta* per sentirlo in cuffia.
+
+## ASIO
+
+Su Windows la soundboard usa anche i driver **ASIO** (schede audio professionali, Focusrite, Behringer, RME,
+Voicemeeter…). In *Impostazioni → Audio* scegli **ASIO** come driver, poi:
+
+- **Uscita verso Discord** e **Monitor** sullo **stesso dispositivo**, con **coppie di canali diverse** (es. 1-2 verso
+  il cavo virtuale o Voicemeeter, 3-4 per le cuffie): un driver ASIO si può aprire una volta sola, per cui tutto
+  passa da un unico flusso con lo stesso clock (latenza minima, nessun buffer tra schede).
+- Gli **ingressi** (anche mono, un canale per ingresso) si scelgono nel mixer, sullo stesso dispositivo.
+- Frequenza e buffer devono essere supportati dal driver (spesso si regolano anche nel suo pannello).
+
+Per far arrivare l'audio a Discord con ASIO serve un'uscita che Discord veda come microfono, per esempio i canali
+del bus virtuale di **Voicemeeter** o il loopback della scheda. Se un driver ASIO dà problemi all'avvio, togli la
+spunta *Driver ASIO* nelle impostazioni e riavvia il programma.
 
 ## Gli altri sentono la propria voce (eco)
 
@@ -216,6 +247,7 @@ Tasto destro su un pad → **Personalizza…** → *Taglio e dissolvenze*:
 
 - **Linee verticali**: trascinale per scegliere da dove parte e dove finisce il suono (le parti scure non si sentono). Clic su un punto della forma d'onda per spostarci la linea più vicina.
 - **Quadratini in alto**: trascinali verso l'interno per la **dissolvenza in entrata** (sinistra) e **in uscita** (destra); la curva arancione mostra il volume.
+- **Pan**: sposta il suono a sinistra o a destra (doppio clic o **C** = centro); si somma al pan del canale Soundboard.
 - I tempi si possono anche scrivere in secondi; *Fine* = «fine» vuol dire fino alla fine del file. **▶ Ascolta** prova il risultato in cuffia (con il volume scelto), **Ripristina** torna al suono intero.
 
 Il file non viene modificato. Vale anche per le frasi della sintesi vocale (la forma d'onda compare dopo che la frase è stata detta almeno una volta). Se il taglio cade in mezzo al suono, una micro-dissolvenza di 3 ms evita il «clic».
@@ -365,12 +397,13 @@ src/soundboard_vst/
   eventlog.py            registro degli eventi (console e file giornalieri)
   ui/screen.py           adattamento allo schermo (dimensioni, testi accorciati, sezioni a sinistra)
   audio/engine.py        motore audio: stream, mix, routing
-  audio/mixer.py         canale del mixer (inserti, fader, mute, meter)
+  audio/mixer.py         canali del mixer (inserti, fader, pan, mute/solo, meter; ingressi mono/stereo)
   audio/plugins.py       inserti: effetti integrati e VST3
   audio/library.py       elenco e decodifica dei suoni
-  audio/devices.py       dispositivi audio (sounddevice / PortAudio)
+  audio/devices.py       dispositivi audio (sounddevice / PortAudio, anche ASIO)
   audio/ringbuffer.py    buffer tra schede audio con clock diversi
-  ui/                    soundboard, mixer, meter, finestre di dialogo
+  ui/                    soundboard, mixer, meter, finestre di dialogo, icona del programma
+packaging/               avvio per PyInstaller, icona dell'eseguibile (make_icon.py la rigenera)
 tests/                   test del motore e della libreria
 ```
 

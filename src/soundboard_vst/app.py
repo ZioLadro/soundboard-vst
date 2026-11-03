@@ -27,6 +27,7 @@ from .config import Config, config_dir
 from .ui import theme
 from .ui import plugin_dialogs
 from .ui.log_view import LogView
+from .ui.icons import app_icon
 from .ui.screen import ElidedLabel, initial_window_size, keep_on_screen, scrollable
 from .ui.mixer_view import MixerView
 from .ui.player_view import PlayerView
@@ -35,6 +36,18 @@ from .ui.myinstants_dialog import MyInstantsDialog
 from .ui.settings_dialog import SettingsDialog
 from .ui.sound_dialog import MidiBridge
 from .ui.soundboard_view import SoundboardView
+
+
+def set_app_user_model_id() -> None:
+    """Su Windows la barra delle applicazioni mostra l'icona del programma, non quella di Python."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(f"ZioLadro.SoundboardVST.{__version__}")
+    except Exception:
+        pass
 
 
 def board_status_text(info: dict) -> str:
@@ -71,6 +84,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.config = config
         self.setWindowTitle(APP_NAME)
+        self.setWindowIcon(app_icon())
         self.resize(initial_window_size(self))      # poi, se c'è, la posizione salvata
 
         a = config.data["audio"]
@@ -138,9 +152,9 @@ class MainWindow(QMainWindow):
         self.board.changed.connect(self.schedule_save)
         self.board.sounds_reloaded.connect(self.preload_sounds)
 
-        self.mixer = MixerView(self.engine, self.vst_plugins, self.rescan_vst, inputs=self.input_names,
-                               current_input=lambda: self.config.data["audio"].get("input_device", ""),
-                               set_input=self.set_input_device, on_mic_to_bot=self._on_mic_to_bot)
+        self.mixer = MixerView(self.engine, self.vst_plugins, self.rescan_vst, inputs=self.input_devices,
+                               set_input=self.set_input_device, on_mic_to_bot=self._on_mic_to_bot,
+                               on_inputs_changed=self._on_inputs_changed)
         self.mixer.changed.connect(self.schedule_save)
         mixer_page = QWidget()
         mp = QVBoxLayout(mixer_page)
@@ -176,7 +190,8 @@ class MainWindow(QMainWindow):
 
         # Stato salvato -------------------------------------------------------------
         errors = self.engine.load_dict(config.data.get("mixer", {}))
-        self.mixer.sync_from_model()
+        self.engine.mic.device = a.get("input_device", "")     # il Microfono segue le impostazioni audio
+        self.mixer.rebuild()
         self._restore_window()
 
         self._ui_timer = QTimer(self, interval=33)
@@ -246,7 +261,8 @@ class MainWindow(QMainWindow):
         self.engine.set_format(a.get("sample_rate", 48000), a.get("block_size", 512))
         self.cache.set_sample_rate(self.engine.sample_rate)
         st = self.engine.start(a.get("host_api", ""), a.get("input_device", ""),
-                               a.get("virtual_output", ""), a.get("monitor_output", ""))
+                               a.get("virtual_output", ""), a.get("monitor_output", ""),
+                               int(a.get("virtual_channel", 0) or 0), int(a.get("monitor_channel", 0) or 0))
         self._update_audio_ui()
         if st.warnings:
             self.statusBar().showMessage(" · ".join(st.warnings), 10000)
@@ -256,7 +272,7 @@ class MainWindow(QMainWindow):
         self.check_echo()
 
     def input_names(self) -> list[str]:
-        """Ingressi audio del driver scelto (per il canale Microfono del mixer e della pagina web)."""
+        """Ingressi audio del driver scelto (per i canali d'ingresso del mixer e della pagina web)."""
         if not devices.audio_available():
             return []
         try:
@@ -264,17 +280,44 @@ class MainWindow(QMainWindow):
         except Exception:
             return []
 
-    def set_input_device(self, name: str) -> None:
-        """Cambia il microfono dal mixer: salva e riavvia l'audio se era acceso."""
-        self.config.data["audio"]["input_device"] = name
-        self.config.save()
-        eventlog.log(eventlog.SOUND, f"Ingresso del microfono: {name or 'nessuno'}")
+    def input_devices(self) -> list[tuple[str, int]]:
+        """Come ``input_names``, con il numero di canali di ciascuno (2 se non si sa)."""
+        names = self.input_names()
+        try:
+            counts = {d.name: d.max_in for d in devices.inputs(self.config.data["audio"].get("host_api", ""))} \
+                if devices.audio_available() else {}
+        except Exception:
+            counts = {}
+        return [(n, counts.get(n, 2)) for n in names]
+
+    def set_input_device(self, name: str, strip_id: str = "mic", channel: int | None = None,
+                         mono: bool | None = None) -> None:
+        """Cambia dispositivo (e canali) di un ingresso dal mixer: salva e riavvia l'audio se era acceso."""
+        strip = self.engine.input_strip(strip_id)
+        if strip is None:
+            return
+        if strip is self.engine.mic:
+            self.config.data["audio"]["input_device"] = name
+        strip.device = name
+        if channel is not None:
+            strip.channel = max(0, int(channel))
+        if mono is not None:
+            strip.mono = bool(mono)
+        self.save()
+        eventlog.log(eventlog.SOUND, f"Ingresso di {strip.name}: {name or 'nessuno'}"
+                     + (f" (canale {strip.channel_label})" if name else ""))
         if self.engine.status.running:
             self.start_audio()
         self.mixer.refresh_inputs()
 
-    def _on_mic_to_bot(self, on: bool) -> None:
-        eventlog.log(eventlog.DISCORD, "Microfono inviato anche al bot" if on else "Microfono non più inviato al bot")
+    def _on_inputs_changed(self) -> None:
+        """Ingressi aggiunti o tolti: salva e riapre i dispositivi."""
+        self.save()
+        if self.engine.status.running:
+            self.start_audio()
+
+    def _on_mic_to_bot(self, on: bool, name: str = "Microfono") -> None:
+        eventlog.log(eventlog.DISCORD, f"{name} inviato anche al bot" if on else f"{name} non più inviato al bot")
         if on:
             self.bot.notify_sound()             # se il bot è in canale, inizia a trasmettere subito
         self.schedule_save()
@@ -282,7 +325,7 @@ class MainWindow(QMainWindow):
     def check_echo(self) -> None:
         """Avvisa se la configurazione fa sentire agli altri la propria voce su Discord."""
         a = self.config.data["audio"]
-        risks = devices.echo_risks(a.get("host_api", ""), a.get("input_device", ""),
+        risks = devices.echo_risks(a.get("host_api", ""), [s.device for s in self.engine.inputs if s.device],
                                    a.get("virtual_output", ""), a.get("monitor_output", ""))
         key = tuple(risks)
         if not risks or key == self._echo_warned:
@@ -347,9 +390,13 @@ class MainWindow(QMainWindow):
             eventlog.log(eventlog.VOICE if tts.is_phrase(key) else eventlog.SOUND,
                          self.board.display_name(key), who)
         vol = float(cfg.get("volume", 1.0))
+        try:
+            pan = max(-1.0, min(1.0, float(cfg.get("pan", 0.0) or 0.0)))
+        except (TypeError, ValueError):
+            pan = 0.0
         speech = key == tts.LIVE_KEY or tts.is_phrase(key)      # frasi: canale «Sintesi vocale» del mixer
         self.engine.play(key, data, vol * scale, overlap=self.board.overlap.isChecked(),
-                         strip="tts" if speech else "sounds")
+                         strip="tts" if speech else "sounds", pan=pan)
         self.bot.notify_sound()
 
     def trigger(self, key: str, scale: float = 1.0) -> None:
@@ -719,14 +766,14 @@ class MainWindow(QMainWindow):
     def _on_myinstants_added(self, path: Path) -> None:
         self.board.add_keys([path.name])
 
-    def preview_audio(self, data, gain: float = 1.0) -> None:
+    def preview_audio(self, data, gain: float = 1.0, pan: float = 0.0) -> None:
         """Anteprima in cuffia di un suono già decodificato (es. con taglio e dissolvenze); None = ferma."""
         if data is None:
             self.engine.stop_sounds("__anteprima__")
             return
         if not self.engine.status.running:
             self.statusBar().showMessage("Audio fermo: premi «Avvia audio».", 4000)
-        self.engine.play("__anteprima__", data, gain, preview=True)
+        self.engine.play("__anteprima__", data, gain, preview=True, pan=pan)
 
     def preview_file(self, path: Path) -> None:
         """Riproduce un file solo in cuffia (non arriva a Discord)."""
@@ -802,8 +849,12 @@ class MainWindow(QMainWindow):
             self.config.save()
             self._vst_cache = None
             # riavvia audio e MIDI solo se sono cambiati (un riavvio interrompe per un attimo anche il bot)
+            self.engine.mic.device = self.config.data["audio"].get("input_device", "")
             if self.config.data["audio"] != old_audio or not self.engine.status.running:
                 self.start_audio()
+            self.mixer.refresh_inputs()
+            if bool(self.config.data["audio"].get("asio", True)) != bool(old_audio.get("asio", True)):
+                QMessageBox.information(self, "ASIO", "Il cambio dei driver ASIO vale dal prossimo avvio del programma.")
             if self.config.data["midi"].get("input", "") != old_midi:
                 self.open_midi()
 
@@ -930,14 +981,18 @@ def main() -> None:
     # Il thread audio (callback di PortAudio) deve prendere il GIL ogni ~10 ms: con l'intervallo
     # predefinito (5 ms) un thread occupato (yt-dlp, interfaccia, bot) può farlo arrivare tardi.
     sys.setswitchinterval(0.001)
+    config = Config()
+    devices.ASIO_ENABLED = bool(config.data["audio"].get("asio", True))   # prima di caricare PortAudio
+    set_app_user_model_id()
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    app.setWindowIcon(app_icon())
     app.setApplicationVersion(__version__)
     app.setStyle("Fusion")
     screen = app.primaryScreen()
     size = screen.availableGeometry().size() if screen is not None else None
     app.setStyleSheet(theme.stylesheet(theme.text_scale_for(size.width(), size.height()) if size else 1.0))
-    window = MainWindow(Config())
+    window = MainWindow(config)
     window.show()
     sys.exit(app.exec())
 

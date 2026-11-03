@@ -84,8 +84,12 @@ def selftest() -> int:
     from aiohttp import web  # noqa: F401  server del controllo remoto
     from soundboard_vst.remote.server import RemoteServer  # noqa: F401
 
-    import sounddevice  # PortAudio deve essere incluso
+    devices.sd()            # PortAudio deve essere inclusa (su Windows quella con ASIO)
+    import sounddevice
 
+    if sys.platform == "win32":
+        assert devices.asio_loaded, "PortAudio con ASIO non inclusa"
+        print("host API:", ", ".join(devices.host_apis()))
     from soundboard_vst import midi
 
     if sys.platform == "win32":

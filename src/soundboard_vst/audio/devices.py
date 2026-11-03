@@ -1,26 +1,53 @@
-"""Elenco dispositivi audio tramite sounddevice (PortAudio)."""
+"""Elenco dispositivi audio tramite sounddevice (PortAudio).
+
+Su Windows sounddevice (dalla 0.5) include anche una versione di PortAudio con i driver
+**ASIO**: si sceglie con la variabile d'ambiente ``SD_ENABLE_ASIO`` prima dell'import. Qui
+la si attiva (se ``ASIO_ENABLED``) e, se quella libreria non si carica, si torna a quella normale.
+"""
 
 from __future__ import annotations
 
+import os
+import sys
 from dataclasses import dataclass
 
 _sd = None
 _sd_error: str | None = None
+ASIO_ENABLED = True          # da impostare prima del primo uso (si applica all'avvio del programma)
+ASIO_API = "ASIO"
+asio_loaded = False          # True se è stata caricata la PortAudio con ASIO
 
 
 def sd():
     """Importa sounddevice solo quando serve (PortAudio può mancare)."""
-    global _sd, _sd_error
+    global _sd, _sd_error, asio_loaded
     if _sd is None and _sd_error is None:
+        want_asio = ASIO_ENABLED and sys.platform == "win32"
+        if want_asio:
+            os.environ["SD_ENABLE_ASIO"] = "1"
         try:
             import sounddevice
 
             _sd = sounddevice
+            asio_loaded = want_asio
         except Exception as exc:  # OSError se manca la libreria PortAudio
             _sd_error = str(exc)
+            if want_asio:                     # PortAudio con ASIO assente o difettosa: quella normale
+                os.environ.pop("SD_ENABLE_ASIO", None)
+                sys.modules.pop("sounddevice", None)
+                try:
+                    import sounddevice
+
+                    _sd, _sd_error = sounddevice, None
+                except Exception as exc2:
+                    _sd_error = str(exc2)
     if _sd is None:
         raise RuntimeError(f"sounddevice/PortAudio non disponibile: {_sd_error}")
     return _sd
+
+
+def is_asio(host_api: str) -> bool:
+    return host_api == ASIO_API
 
 
 def audio_available() -> bool:
@@ -72,7 +99,7 @@ def host_apis() -> list[str]:
 
 
 def default_host_api() -> str:
-    """Su Windows WASAPI dà nomi completi e latenza migliore di MME."""
+    """Su Windows WASAPI dà nomi completi e latenza migliore di MME (ASIO si sceglie a mano)."""
     apis = host_apis()
     for preferred in ("Windows WASAPI", "Core Audio", "PulseAudio", "ALSA"):
         if preferred in apis:
@@ -102,6 +129,16 @@ def inputs(host_api: str = "") -> list[Device]:
 
 def outputs(host_api: str = "") -> list[Device]:
     return [d for d in list_devices(host_api) if d.max_out > 0]
+
+
+def channel_pairs(max_channels: int) -> list[tuple[int, str]]:
+    """Coppie di canali in uscita di un dispositivo: [(0, "1-2"), (2, "3-4"), …] (una sola se mono)."""
+    if max_channels <= 1:
+        return [(0, "1")]
+    out = [(c, f"{c + 1}-{c + 2}") for c in range(0, max_channels - 1, 2)]
+    if max_channels % 2:
+        out.append((max_channels - 1, f"{max_channels}"))
+    return out
 
 
 def find(name: str, host_api: str, kind: str) -> Device | None:
@@ -144,16 +181,20 @@ def system_default_output(host_api: str) -> Device | None:
     return next((d for d in outputs(host_api) if d.index == idx), None)
 
 
-def echo_risks(host_api: str, input_name: str, virtual_name: str, monitor_name: str) -> list[str]:
-    """Configurazioni che fanno sentire agli altri la propria voce (eco) su Discord."""
+def echo_risks(host_api: str, input_name, virtual_name: str, monitor_name: str) -> list[str]:
+    """Configurazioni che fanno sentire agli altri la propria voce (eco) su Discord.
+
+    ``input_name``: un nome o un elenco di nomi (tutti gli ingressi del mixer)."""
     risks: list[str] = []
-    inp = find(input_name, host_api, "input")
-    if inp and inp.looks_loopback:
-        risks.append(
-            f"L'ingresso «{inp.name}» registra l'audio del PC, non il microfono: anche le voci "
-            "degli altri finiscono nel mix e tornano a loro come eco. Scegli il tuo microfono come ingresso.")
+    names = [input_name] if isinstance(input_name, str) else list(input_name or [])
+    for name in dict.fromkeys(names):
+        inp = find(name, host_api, "input")
+        if inp and inp.looks_loopback and not is_asio(host_api):
+            risks.append(
+                f"L'ingresso «{inp.name}» registra l'audio del PC, non il microfono: anche le voci "
+                "degli altri finiscono nel mix e tornano a loro come eco. Scegli il tuo microfono come ingresso.")
     mon = find(monitor_name, host_api, "output")
-    if mon and mon.looks_virtual:
+    if mon and mon.looks_virtual and not is_asio(host_api):    # con ASIO conta la coppia di canali
         risks.append(
             f"Il monitor è impostato su «{mon.name}»: quello che dovresti sentire tu finisce nel cavo "
             "e arriva a Discord. Imposta le cuffie come monitor.")

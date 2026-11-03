@@ -9,6 +9,7 @@ MUTED = "#8b92a3"
 ACCENT = "#f2a93b"      # suono in riproduzione, pulsanti principali
 ACCENT_2 = "#3ec7b2"    # fader / meter
 DANGER = "#e5534b"
+SOLO = "#e8d44d"        # pulsante SOLO acceso
 
 def stylesheet(scale: float = 1.0) -> str:
     """Foglio di stile; ``scale`` ingrandisce tutti i testi (es. 1.1 sugli schermi 2K al 100%)."""
@@ -57,6 +58,10 @@ QPushButton#primary:hover {{ background: #f6bb5e; }}
 QPushButton#danger {{ color: {DANGER}; }}
 QPushButton#mute {{ padding: 4px 0; font-weight: 700; }}
 QPushButton#mute:checked {{ background: {DANGER}; color: white; border: none; }}
+QPushButton#solo {{ padding: 4px 0; font-weight: 700; }}
+QPushButton#solo:checked {{ background: {SOLO}; color: #15171c; border: none; }}
+QPushButton#addInput {{ padding: 8px 6px; color: {MUTED}; border: 1px dashed {BORDER}; background: transparent; }}
+QPushButton#addInput:hover {{ color: {TEXT}; border-color: {ACCENT}; }}
 QToolButton::menu-indicator {{ image: none; width: 0; }}
 QToolButton#small {{ padding: 2px 6px; min-width: 18px; }}
 

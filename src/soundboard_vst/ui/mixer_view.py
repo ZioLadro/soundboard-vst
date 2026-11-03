@@ -1,4 +1,5 @@
-"""Sezione mixer: un canale per Microfono, Soundboard, Master e Monitor."""
+"""Sezione mixer: gli ingressi (Microfono e quelli aggiunti), Soundboard, Sintesi vocale, Player,
+Master e Monitor. Ogni canale ha inserti, pan, fader, MUTE e (ingressi e sorgenti) SOLO."""
 
 from __future__ import annotations
 
@@ -8,11 +9,11 @@ from typing import Callable
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QListWidget,
-    QListWidgetItem, QMenu, QMessageBox, QPushButton, QToolButton, QVBoxLayout, QWidget,
+    QListWidgetItem, QMenu, QMessageBox, QPushButton, QSizePolicy, QSlider, QToolButton, QVBoxLayout, QWidget,
 )
 
 from ..audio.engine import AudioEngine
-from ..audio.mixer import ChannelStrip
+from ..audio.mixer import ChannelStrip, InputStrip, format_pan
 from ..audio.plugins import BUILTIN_EFFECTS, InsertSlot, create_builtin, load_vst3, vst3_names_in_file
 from .meter import DbFader, LevelMeter, format_db
 from .plugin_dialogs import edit_slot, open_native_editor
@@ -20,11 +21,35 @@ from .plugin_dialogs import edit_slot, open_native_editor
 SLOT_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
+class PanSlider(QSlider):
+    """Pan orizzontale da -100 (sinistra) a +100 (destra); doppio clic = centro."""
+
+    def __init__(self, parent=None):
+        super().__init__(Qt.Orientation.Horizontal, parent)
+        self.setRange(-100, 100)
+        self.setPageStep(10)
+        self.setSingleStep(2)
+        self.setToolTip("Pan: sposta il canale a sinistra o a destra (doppio clic = centro)")
+
+    def mouseDoubleClickEvent(self, event):
+        self.setValue(0)
+
+
+class StripTitle(QLabel):
+    """Titolo del canale; doppio clic per rinominare (solo ingressi)."""
+    double_clicked = Signal()
+
+    def mouseDoubleClickEvent(self, event):
+        self.double_clicked.emit()
+
+
 class StripWidget(QFrame):
     changed = Signal()                       # qualcosa da salvare
+    rename_requested = Signal()
+    remove_requested = Signal()
 
     def __init__(self, strip: ChannelStrip, vst_list: Callable[[], list[Path]],
-                 rescan: Callable[[], None], parent=None):
+                 rescan: Callable[[], None], parent=None, soloable: bool = True):
         super().__init__(parent)
         self.strip = strip
         self._vst_list = vst_list
@@ -32,8 +57,24 @@ class StripWidget(QFrame):
         self.setObjectName("panel")
         self.setMinimumWidth(190)
 
-        title = QLabel(strip.name)
+        self.title = title = StripTitle(strip.name)
         title.setObjectName("stripTitle")
+        title_row = QHBoxLayout()
+        title_row.setSpacing(4)
+        title_row.addWidget(title, 1)
+        if isinstance(strip, InputStrip):
+            title.setToolTip("Doppio clic per rinominare")
+            title.double_clicked.connect(self.rename_requested)
+            menu_btn = QToolButton(text="⋯")
+            menu_btn.setObjectName("small")
+            menu_btn.setToolTip("Rinomina o togli l'ingresso")
+            menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            menu = QMenu(menu_btn)
+            menu.addAction("Rinomina…", self.rename_requested.emit)
+            rm = menu.addAction("Togli ingresso", self.remove_requested.emit)
+            rm.setEnabled(strip.id != "mic")
+            menu_btn.setMenu(menu)
+            title_row.addWidget(menu_btn)
 
         # Inserti -------------------------------------------------------------
         ins_label = QLabel("INSERTI")
@@ -85,19 +126,48 @@ class StripWidget(QFrame):
         self.mute.setCheckable(True)
         self.mute.setChecked(strip.mute)
         self.mute.toggled.connect(self._on_mute)
+        self.solo: QPushButton | None = None
+        buttons = QHBoxLayout()
+        buttons.setSpacing(4)
+        buttons.addWidget(self.mute, 1)
+        if soloable:
+            self.solo = QPushButton("SOLO")
+            self.solo.setObjectName("solo")
+            self.solo.setCheckable(True)
+            self.solo.setChecked(strip.solo)
+            self.solo.setToolTip("Ascolta solo i canali in SOLO: gli altri ingressi e sorgenti tacciono\n"
+                                 "(anche verso Discord). Si possono mettere in solo più canali.")
+            self.solo.toggled.connect(self._on_solo)
+            buttons.addWidget(self.solo, 1)
 
-        self.extra = QVBoxLayout()   # spazio per opzioni specifiche (monitor)
+        # Pan -------------------------------------------------------------------------
+        pan_label = QLabel("PAN")
+        pan_label.setObjectName("sectionTitle")
+        self.pan = PanSlider()
+        self.pan.setValue(int(round(strip.pan * 100)))
+        self.pan_value = QLabel(format_pan(strip.pan))
+        self.pan_value.setMinimumWidth(42)
+        self.pan_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.pan.valueChanged.connect(self._on_pan)
+        pan_row = QHBoxLayout()
+        pan_row.setSpacing(6)
+        pan_row.addWidget(pan_label)
+        pan_row.addWidget(self.pan, 1)
+        pan_row.addWidget(self.pan_value)
+
+        self.extra = QVBoxLayout()   # spazio per opzioni specifiche (ingresso, monitor)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(10, 10, 10, 10)
-        lay.addWidget(title)
+        lay.addLayout(title_row)
         lay.addWidget(ins_label)
         lay.addWidget(self.inserts)
         lay.addLayout(ins_bar)
         lay.addLayout(self.extra)
+        lay.addLayout(pan_row)
         lay.addLayout(fm, 1)
         lay.addWidget(self.db_label)
-        lay.addWidget(self.mute)
+        lay.addLayout(buttons)
         self.refresh_inserts()
 
     def _small(self, text, tip, fn):
@@ -116,7 +186,21 @@ class StripWidget(QFrame):
         self.mute.blockSignals(True)
         self.mute.setChecked(self.strip.mute)
         self.mute.blockSignals(False)
+        self._sync_pan_solo()
+        self.title.setText(self.strip.name)
         self.refresh_inserts()
+
+    def _sync_pan_solo(self) -> None:
+        value = int(round(self.strip.pan * 100))
+        if self.pan.value() != value:
+            self.pan.blockSignals(True)
+            self.pan.setValue(value)
+            self.pan.blockSignals(False)
+            self.pan_value.setText(format_pan(self.strip.pan))
+        if self.solo is not None and self.solo.isChecked() != self.strip.solo:
+            self.solo.blockSignals(True)
+            self.solo.setChecked(self.strip.solo)
+            self.solo.blockSignals(False)
 
     def sync_levels(self) -> None:
         if self.fader.value() != int(round(self.strip.gain_db * 10)):
@@ -128,6 +212,9 @@ class StripWidget(QFrame):
             self.mute.blockSignals(True)
             self.mute.setChecked(self.strip.mute)
             self.mute.blockSignals(False)
+        self._sync_pan_solo()
+        if self.title.text() != self.strip.name:
+            self.title.setText(self.strip.name)
 
     def refresh_inserts(self, select: InsertSlot | None = None) -> None:
         self.inserts.blockSignals(True)
@@ -155,6 +242,15 @@ class StripWidget(QFrame):
 
     def _on_mute(self, on: bool) -> None:
         self.strip.mute = on
+        self.changed.emit()
+
+    def _on_solo(self, on: bool) -> None:
+        self.strip.solo = on
+        self.changed.emit()
+
+    def _on_pan(self, value: int) -> None:
+        self.strip.pan = value / 100.0
+        self.pan_value.setText(format_pan(self.strip.pan))
         self.changed.emit()
 
     def _on_item_changed(self, item: QListWidgetItem) -> None:
@@ -263,100 +359,124 @@ class StripWidget(QFrame):
         m.exec(self.inserts.mapToGlobal(pos))
 
 
+def channel_options(max_in: int) -> list[tuple[str, tuple[int, bool]]]:
+    """Scelte dei canali di un ingresso: stereo a coppie, poi mono uno per uno."""
+    n = max(1, int(max_in))
+    out = [(f"Stereo {c + 1}-{c + 2}", (c, False)) for c in range(0, n - 1, 2)]
+    out += [(f"Mono {c + 1}", (c, True)) for c in range(n)]
+    return out
+
+
 class MixerView(QWidget):
     changed = Signal()
 
     def __init__(self, engine: AudioEngine, vst_list: Callable[[], list[Path]],
-                 rescan: Callable[[], None], parent=None, inputs: Callable[[], list[str]] = list,
-                 current_input: Callable[[], str] = str, set_input: Callable[[str], None] | None = None,
-                 on_mic_to_bot: Callable[[bool], None] | None = None):
-        """``inputs()``/``current_input()``/``set_input(nome)``: scelta dell'ingresso del canale Microfono;
-        ``on_mic_to_bot(attivo)``: avvisa quando il microfono viene mandato (o non più) al bot."""
+                 rescan: Callable[[], None], parent=None, inputs: Callable[[], list] = list,
+                 current_input: Callable[[], str] | None = None, set_input: Callable[..., None] | None = None,
+                 on_mic_to_bot: Callable[..., None] | None = None,
+                 on_inputs_changed: Callable[[], None] | None = None):
+        """``inputs()``: dispositivi d'ingresso, come nomi o come (nome, canali);
+        ``set_input(nome, id_ingresso, channel=…, mono=…)``: cambia dispositivo o canali di un ingresso;
+        ``on_mic_to_bot(attivo, nome)``: un ingresso viene mandato (o non più) al bot;
+        ``on_inputs_changed()``: ingressi aggiunti o tolti (da salvare, dispositivi da riaprire)."""
         super().__init__(parent)
         self.engine = engine
-        self._inputs, self._current_input = inputs, current_input
+        self._vst_list, self._rescan = vst_list, rescan
+        self._inputs = inputs
         self._set_input, self._on_mic_to_bot = set_input, on_mic_to_bot
+        self._on_inputs_changed = on_inputs_changed
         self.strips: list[StripWidget] = []
-        row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(8)
-        for strip in engine.strips:
-            w = StripWidget(strip, vst_list, rescan)
+        self._input_ui: dict[str, dict] = {}
+        self._hear_inputs: dict[str, QCheckBox] = {}
+        self._device_cache: list[tuple[str, int]] | None = None
+        self._row = QHBoxLayout(self)
+        self._row.setContentsMargins(0, 0, 0, 0)
+        self._row.setSpacing(8)
+        self.rebuild()
+
+    # Costruzione -------------------------------------------------------------------------
+    def _signature(self) -> tuple:
+        return tuple((s.id, s.name) for s in self.engine.strips)
+
+    def rebuild(self) -> None:
+        """Ricrea i canali (dopo aver aggiunto, tolto o rinominato un ingresso)."""
+        while self._row.count():
+            item = self._row.takeAt(0)
+            old = item.widget()
+            if old is not None:
+                old.hide()
+                old.setParent(None)
+                old.deleteLater()
+        self.strips = []
+        self._input_ui = {}
+        self._hear_inputs = {}
+        self._built = self._signature()
+        eng = self.engine
+        soloable = {s.id for s in eng.source_strips}
+        for strip in eng.strips:
+            w = StripWidget(strip, self._vst_list, self._rescan, soloable=strip.id in soloable)
             w.changed.connect(self.changed)
             self.strips.append(w)
-            row.addWidget(w)
-            if strip is engine.monitor:
+            self._row.addWidget(w)
+            if isinstance(strip, InputStrip):
+                w.rename_requested.connect(lambda s=strip: self.rename_input(s.id))
+                w.remove_requested.connect(lambda s=strip: self.remove_input(s.id))
+                self._add_input_options(w, strip)
+                if strip is eng.inputs[-1]:
+                    self._row.addWidget(self._add_input_button())
+            if strip is eng.monitor:
                 self._add_monitor_options(w)
-            if strip is engine.mic:
-                self._add_mic_options(w)
+        self.refresh_inputs()
 
-    def _add_mic_options(self, w: StripWidget) -> None:
+    def _add_input_button(self) -> QPushButton:
+        b = QPushButton("＋\nIngresso")
+        b.setObjectName("addInput")
+        b.setToolTip("Aggiungi un canale d'ingresso (un altro microfono, uno strumento, una linea…)")
+        b.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        b.setFixedWidth(64)
+        b.clicked.connect(self.add_input)
+        return b
+
+    def _add_input_options(self, w: StripWidget, strip: InputStrip) -> None:
         label = QLabel("INGRESSO")
         label.setObjectName("sectionTitle")
-        self.input_combo = QComboBox()
-        self.input_combo.setToolTip("Microfono o scheda audio di questo canale (l'audio si riavvia per un attimo)")
-        self.input_combo.setMinimumContentsLength(10)
-        self.input_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.input_combo.activated.connect(self._input_chosen)
+        combo = QComboBox()
+        combo.setToolTip("Dispositivo di questo canale (l'audio si riavvia per un attimo)")
+        combo.setMinimumContentsLength(10)
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        combo.activated.connect(lambda i, sid=strip.id: self._input_chosen(sid, i))
         refresh = QToolButton(text="↻")
         refresh.setObjectName("small")
         refresh.setToolTip("Aggiorna l'elenco dei dispositivi")
-        refresh.clicked.connect(self.refresh_inputs)
+        refresh.clicked.connect(lambda: self.refresh_inputs(reload=True))
         row = QHBoxLayout()
         row.setSpacing(4)
-        row.addWidget(self.input_combo, 1)
+        row.addWidget(combo, 1)
         row.addWidget(refresh)
-        self.mic_to_bot = QCheckBox("Anche al bot Discord")
-        self.mic_to_bot.setToolTip(
-            "La tua voce (con gli inserti di questo canale) arriva anche dal bot.\n"
+        channels = QComboBox()
+        channels.setToolTip("Canali del dispositivo: stereo (due canali) o mono (uno solo, al centro:\n"
+                            "spostalo con il pan). Utile per le schede con più ingressi (es. ASIO).")
+        channels.activated.connect(lambda i, sid=strip.id: self._channels_chosen(sid, i))
+        to_bot = QCheckBox("Anche al bot Discord")
+        to_bot.setToolTip(
+            "Questo ingresso (con i suoi inserti) arriva anche dal bot.\n"
             "Utile per far parlare il bot (es. con il pitch shifter); se parli anche dal tuo Discord,\n"
             "chi ascolta ti sente due volte: in quel caso muta uno dei due.")
-        self.mic_to_bot.setChecked(self.engine.mic_to_bot)
-        self.mic_to_bot.toggled.connect(self._mic_to_bot_toggled)
+        to_bot.setChecked(strip.to_bot)
+        to_bot.toggled.connect(lambda on, sid=strip.id: self._to_bot_toggled(sid, on))
         w.extra.addWidget(label)
         w.extra.addLayout(row)
-        w.extra.addWidget(self.mic_to_bot)
-        self.refresh_inputs()
-
-    def refresh_inputs(self) -> None:
-        if not hasattr(self, "input_combo"):
-            return
-        try:
-            names = list(self._inputs())
-        except Exception:
-            names = []
-        current = self._current_input() or ""
-        self.input_combo.blockSignals(True)
-        self.input_combo.clear()
-        self.input_combo.addItem("— nessuno —", "")
-        for n in names:
-            self.input_combo.addItem(n, n)
-        if current and current not in names:
-            self.input_combo.addItem(f"{current} (non trovato)", current)
-        self.input_combo.setCurrentIndex(max(0, self.input_combo.findData(current)))
-        self.input_combo.setToolTip(current or "Nessun ingresso")
-        self.input_combo.blockSignals(False)
-
-    def _input_chosen(self, index: int) -> None:
-        name = self.input_combo.itemData(index) or ""
-        if self._set_input is not None and name != (self._current_input() or ""):
-            self._set_input(name)
-        self.input_combo.setToolTip(name or "Nessun ingresso")
-
-    def _mic_to_bot_toggled(self, on: bool) -> None:
-        self.engine.mic_to_bot = on
-        if self._on_mic_to_bot is not None:
-            self._on_mic_to_bot(on)
-        self.changed.emit()
+        w.extra.addWidget(channels)
+        w.extra.addWidget(to_bot)
+        self._input_ui[strip.id] = {"device": combo, "channels": channels, "to_bot": to_bot}
+        if strip is self.engine.mic:
+            self.input_combo, self.mic_to_bot, self.mic_channels = combo, to_bot, channels
 
     def _add_monitor_options(self, w: StripWidget) -> None:
         label = QLabel("ASCOLTA")
         label.setObjectName("sectionTitle")
         self.hear_sounds = QCheckBox("Suoni")
-        self.hear_mic = QCheckBox("Microfono")
         self.hear_sounds.setChecked(self.engine.monitor_hear_sounds)
-        self.hear_mic.setChecked(self.engine.monitor_hear_mic)
-        self.hear_mic.setToolTip("Sentirti in cuffia (con i tuoi inserti). Attenzione al feedback con le casse.")
         self.hear_player = QCheckBox("Player")
         self.hear_player.setChecked(self.engine.monitor_hear_player)
         self.hear_tts = QCheckBox("Voce")
@@ -365,32 +485,182 @@ class MixerView(QWidget):
         self.hear_tts.toggled.connect(lambda v: self._set_monitor("monitor_hear_tts", v))
         self.hear_player.toggled.connect(lambda v: self._set_monitor("monitor_hear_player", v))
         self.hear_sounds.toggled.connect(lambda v: self._set_monitor("monitor_hear_sounds", v))
-        self.hear_mic.toggled.connect(lambda v: self._set_monitor("monitor_hear_mic", v))
         w.extra.addWidget(label)
         w.extra.addWidget(self.hear_sounds)
         w.extra.addWidget(self.hear_tts)
         w.extra.addWidget(self.hear_player)
-        w.extra.addWidget(self.hear_mic)
+        for strip in self.engine.inputs:
+            cb = QCheckBox(strip.name)
+            cb.setChecked(strip.hear)
+            cb.setToolTip("Sentire questo ingresso in cuffia (con i suoi inserti). Attenzione al feedback con le casse.")
+            cb.toggled.connect(lambda v, s=strip: self._set_hear(s, v))
+            w.extra.addWidget(cb)
+            self._hear_inputs[strip.id] = cb
+        self.hear_mic = self._hear_inputs["mic"]
 
+    # Ingressi -------------------------------------------------------------------------------
+    def _devices(self, reload: bool = False) -> list[tuple[str, int]]:
+        if self._device_cache is None or reload:
+            try:
+                items = list(self._inputs())
+            except Exception:
+                items = []
+            self._device_cache = [(i, 2) if isinstance(i, str) else (str(i[0]), int(i[1])) for i in items]
+        return self._device_cache
+
+    def refresh_inputs(self, reload: bool = True) -> None:
+        devs = self._devices(reload)
+        names = [n for n, _ in devs]
+        counts = dict(devs)
+        for sid, ui in self._input_ui.items():
+            strip = self.engine.input_strip(sid)
+            if strip is None:
+                continue
+            combo: QComboBox = ui["device"]
+            current = strip.device or ""
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem("— nessuno —", "")
+            for n in names:
+                combo.addItem(n, n)
+            if current and current not in names:
+                combo.addItem(f"{current} (non trovato)", current)
+            combo.setCurrentIndex(max(0, combo.findData(current)))
+            combo.setToolTip(current or "Nessun ingresso")
+            combo.blockSignals(False)
+
+            ch: QComboBox = ui["channels"]
+            ch.blockSignals(True)
+            ch.clear()
+            n_ch = counts.get(current, max(2, strip.channel + 2))
+            for text, data in channel_options(n_ch):
+                ch.addItem(text, data)
+            want = (strip.channel, strip.mono or n_ch == 1)
+            idx = next((i for i in range(ch.count()) if tuple(ch.itemData(i)) == want), -1)
+            if idx < 0:
+                ch.addItem(f"{'Mono' if strip.mono else 'Stereo'} {strip.channel_label} (non disponibile)", want)
+                idx = ch.count() - 1
+            ch.setCurrentIndex(idx)
+            ch.setEnabled(bool(current))
+            ch.blockSignals(False)
+            ui["to_bot"].blockSignals(True)
+            ui["to_bot"].setChecked(strip.to_bot)
+            ui["to_bot"].blockSignals(False)
+
+    def _call_set_input(self, strip: InputStrip, name: str, **kw) -> None:
+        if self._set_input is None:
+            strip.device = name
+            for k, v in kw.items():
+                setattr(strip, k, v)
+            self.changed.emit()
+            return
+        if strip.id == "mic" and not kw:
+            self._set_input(name)
+        else:
+            self._set_input(name, strip.id, **kw)
+
+    def _input_chosen(self, strip_id: str, index: int) -> None:
+        strip = self.engine.input_strip(strip_id)
+        combo = self._input_ui[strip_id]["device"]
+        name = combo.itemData(index) or ""
+        if strip is not None and name != (strip.device or ""):
+            self._call_set_input(strip, name)
+        combo.setToolTip(name or "Nessun ingresso")
+
+    def _channels_chosen(self, strip_id: str, index: int) -> None:
+        strip = self.engine.input_strip(strip_id)
+        data = self._input_ui[strip_id]["channels"].itemData(index)
+        if strip is None or data is None:
+            return
+        channel, mono = int(data[0]), bool(data[1])
+        if (channel, mono) != (strip.channel, strip.mono):
+            self._call_set_input(strip, strip.device, channel=channel, mono=mono)
+
+    def _to_bot_toggled(self, strip_id: str, on: bool) -> None:
+        strip = self.engine.input_strip(strip_id)
+        if strip is None:
+            return
+        strip.to_bot = on
+        if self._on_mic_to_bot is not None:
+            if strip.id == "mic":
+                self._on_mic_to_bot(on)
+            else:
+                self._on_mic_to_bot(on, strip.name)
+        self.changed.emit()
+
+    def _set_hear(self, strip: InputStrip, on: bool) -> None:
+        strip.hear = on
+        self.changed.emit()
+
+    def add_input(self) -> InputStrip | None:
+        try:
+            strip = self.engine.add_input()
+        except ValueError as exc:
+            QMessageBox.information(self, "Ingressi", str(exc))
+            return None
+        self.rebuild()
+        self.changed.emit()
+        if self._on_inputs_changed is not None:
+            self._on_inputs_changed()
+        return strip
+
+    def rename_input(self, strip_id: str, name: str | None = None) -> None:
+        strip = self.engine.input_strip(strip_id)
+        if strip is None:
+            return
+        if name is None:
+            name, ok = QInputDialog.getText(self, "Rinomina ingresso", "Nome del canale:", text=strip.name)
+            if not ok:
+                return
+        name = " ".join(str(name).split())[:40]
+        if not name or name == strip.name:
+            return
+        strip.name = name
+        self.rebuild()
+        self.changed.emit()
+
+    def remove_input(self, strip_id: str, confirm: bool = True) -> None:
+        strip = self.engine.input_strip(strip_id)
+        if strip is None or strip_id == "mic":
+            return
+        if confirm and QMessageBox.question(self, "Togli ingresso", f"Togliere il canale «{strip.name}» "
+                                            "con i suoi inserti?") != QMessageBox.StandardButton.Yes:
+            return
+        self.engine.remove_input(strip_id)
+        self.rebuild()
+        self.changed.emit()
+        if self._on_inputs_changed is not None:
+            self._on_inputs_changed()
+
+    # Monitor ----------------------------------------------------------------------------------
     def _set_monitor(self, attr: str, value: bool) -> None:
         setattr(self.engine, attr, value)
         self.changed.emit()
 
+    # Sincronizzazione -------------------------------------------------------------------------
     def sync_from_model(self) -> None:
-        self.hear_tts.setChecked(self.engine.monitor_hear_tts)
-        if hasattr(self, "mic_to_bot"):
-            self.mic_to_bot.blockSignals(True)
-            self.mic_to_bot.setChecked(self.engine.mic_to_bot)
-            self.mic_to_bot.blockSignals(False)
-            self.refresh_inputs()
+        if self._signature() != self._built:
+            self.rebuild()
         for w in self.strips:
             w.sync_from_model()
-        self.hear_sounds.setChecked(self.engine.monitor_hear_sounds)
-        self.hear_mic.setChecked(self.engine.monitor_hear_mic)
-        self.hear_player.setChecked(self.engine.monitor_hear_player)
+        for cb, value in ((self.hear_tts, self.engine.monitor_hear_tts),
+                          (self.hear_sounds, self.engine.monitor_hear_sounds),
+                          (self.hear_player, self.engine.monitor_hear_player)):
+            cb.blockSignals(True)
+            cb.setChecked(value)
+            cb.blockSignals(False)
+        for strip in self.engine.inputs:
+            cb = self._hear_inputs.get(strip.id)
+            if cb is not None:
+                cb.blockSignals(True)
+                cb.setChecked(strip.hear)
+                cb.blockSignals(False)
+        self.refresh_inputs(reload=False)
 
     def sync_levels(self) -> None:
-        """Aggiorna solo fader e mute (dopo un cambio da MIDI o dal Player)."""
+        """Aggiorna fader, pan, mute e solo (dopo un cambio da MIDI, dal Player o dalla pagina web)."""
+        if self._signature() != self._built:
+            self.rebuild()
         for w in self.strips:
             w.sync_levels()
 

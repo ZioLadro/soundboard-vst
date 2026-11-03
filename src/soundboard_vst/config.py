@@ -63,6 +63,9 @@ DEFAULTS: dict[str, Any] = {
         "input_device": "",      # microfono / scheda audio
         "virtual_output": "",    # es. "CABLE Input (VB-Audio Virtual Cable)"
         "monitor_output": "",    # cuffie/casse per ascoltare
+        "virtual_channel": 0,    # primo canale della coppia verso Discord (0 = 1-2, 2 = 3-4…)
+        "monitor_channel": 0,    # primo canale della coppia delle cuffie
+        "asio": True,            # driver ASIO su Windows (si applica al riavvio del programma)
         "sample_rate": 48000,
         "block_size": 512,
     },

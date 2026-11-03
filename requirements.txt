@@ -1,5 +1,5 @@
 PySide6>=6.6
-sounddevice>=0.4.6
+sounddevice>=0.5.1           # dalla 0.5 include PortAudio con ASIO su Windows
 pedalboard>=0.9.10
 numpy>=1.26
 python-rtmidi>=1.5.8; platform_system != "Linux" and python_version < "3.13"
