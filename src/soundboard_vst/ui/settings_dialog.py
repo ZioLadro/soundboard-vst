@@ -529,9 +529,11 @@ class SettingsDialog(QDialog):
         target = midi_map.TARGETS_BY_ID.get(tid) if tid else None
         if target is None:
             return
-        if target.kind == "continuous" and ev.kind != "cc":
-            self.map_hint.setText("Per un volume serve un potenziometro o un fader (CC), non una nota.")
+        if target.kind == "continuous" and not ev.continuous:
+            self.map_hint.setText("Per un volume serve un potenziometro, un fader o una rotella, non una nota.")
             return
+        if target.kind == "button" and ev.kind == "pitch":
+            return   # la rotella del pitch bend non è un pulsante
         if target.kind == "button" and ev.kind == "cc" and not ev.pressed:
             return   # rilascio del pulsante
         self._learning_target = None

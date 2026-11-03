@@ -37,7 +37,7 @@ class MidiParamButton(QWidget):
         self.target_id = target_id
         self.learn = QPushButton()
         self.learn.setObjectName("small")
-        self.learn.setToolTip("Premi e muovi un potenziometro/fader (CC) o suona una nota del controller")
+        self.learn.setToolTip("Premi e muovi un potenziometro, un fader (CC), la rotella del pitch bend o suona una nota del controller")
         self.learn.clicked.connect(self._toggle)
         self.clear = QPushButton("✕")
         self.clear.setObjectName("small")

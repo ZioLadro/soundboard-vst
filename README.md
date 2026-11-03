@@ -247,7 +247,7 @@ Ogni frase viene creata una volta sola e tenuta in una cache (`%APPDATA%\Soundbo
   entra, esci, segui me).
 - Le assegnazioni della mappa hanno la precedenza sulle note dei singoli suoni.
 
-**Parametri degli inserti**: nel mixer apri i parametri di un inserto (✎ o tasto destro → *Parametri…*), premi **MIDI** accanto al parametro e muovi un potenziometro o un fader (CC) o suona una nota: da lì quel controllo muove il parametro (0–127 = dal minimo al massimo; per le note conta la forza). Il pulsante mostra il controllo assegnato (es. `CC 74 · ch 1`), ✕ lo toglie. L'assegnazione resta anche se sposti l'inserto nella catena.
+**Parametri degli inserti**: nel mixer apri i parametri di un inserto (✎ o tasto destro → *Parametri…*), premi **MIDI** accanto al parametro e muovi un potenziometro, un fader (CC), la **rotella del pitch bend** o suona una nota: da lì quel controllo muove il parametro (dal minimo al massimo; per le note conta la forza). La rotella del pitch bend torna al centro quando la lasci, e con lei il parametro: per un valore che resta fermo usa la rotella di modulazione (CC 1) o un potenziometro. Il pulsante mostra il controllo assegnato (es. `CC 74 · ch 1`), ✕ lo toglie. L'assegnazione resta anche se sposti l'inserto nella catena.
 
 **Preset Nektar Impact LX25+** (preset 1 «GM Instrument», quello di fabbrica; valori dal manuale):
 

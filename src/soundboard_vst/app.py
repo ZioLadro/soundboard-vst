@@ -614,7 +614,7 @@ class MainWindow(QMainWindow):
             done("")
             return
         self._param_learn = (target_id, done)
-        self.statusBar().showMessage("Muovi un potenziometro o un fader del controller…", 8000)
+        self.statusBar().showMessage("Muovi un potenziometro, un fader o la rotella del pitch bend…", 8000)
 
     def midi_learn_cancel(self) -> None:
         self._param_learn = None
@@ -626,7 +626,7 @@ class MainWindow(QMainWindow):
     def _on_midi(self, ev) -> None:
         learn = getattr(self, "_param_learn", None)
         if learn is not None:
-            if ev.kind == "cc" or ev.pressed:
+            if ev.continuous or ev.pressed:
                 target_id, done = learn
                 self._param_learn = None
                 midi_map.assign(self.config.data.setdefault("midi_map", {}), target_id, ev.binding())
@@ -642,7 +642,7 @@ class MainWindow(QMainWindow):
                 for t in targets:
                     self._run_target(t, ev)
             return
-        if ev.kind == "cc" and not ev.pressed:
+        if ev.kind == "pitch" or (ev.kind == "cc" and not ev.pressed):
             return
         key = self.board.key_for_midi(ev)
         if key is None:
@@ -656,19 +656,19 @@ class MainWindow(QMainWindow):
         tid = target.id
         param = midi_map.parse_param_target(tid)
         if param is not None:
-            # parametro di un inserto: CC 0–127 (o forza della nota) → dal minimo al massimo
+            # parametro di un inserto: CC 0–127, pitch bend o forza della nota → dal minimo al massimo
             if ev.kind == "note" and not ev.pressed:
                 return
             slot = self.find_insert(param[0])
-            if slot is not None and slot.set_normalized(param[1], ev.value / 127.0):
+            if slot is not None and slot.set_normalized(param[1], ev.normalized):
                 self._params_dirty = True                  # salvataggio raggruppato (arrivano decine di CC)
                 self._save_timer.start()
             return
         if target.kind == "continuous":
-            if ev.kind != "cc":
+            if not ev.continuous:
                 return
             _, sid, _ = tid.split(":")
-            self.engine.strip(sid).gain_db = midi_map.cc_to_db(ev.value)
+            self.engine.strip(sid).gain_db = midi_map.cc_to_db(ev.normalized * 127.0)
             self.mixer.sync_levels()
             self.schedule_save()
             return

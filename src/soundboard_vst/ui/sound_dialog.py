@@ -396,6 +396,8 @@ class SoundSettingsDialog(QDialog):
         self._set_midi(self.midi_binding)
 
     def _on_midi(self, ev) -> None:
+        if ev.kind == "pitch":
+            return                                    # un pad si suona con una nota o un tasto, non con la rotella
         self.midi_binding = ev.binding()
         self._stop_learn()
 
