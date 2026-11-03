@@ -322,6 +322,10 @@ class MixerView(QWidget):
         for w in self.strips:
             w.sync_levels()
 
+    def levels(self) -> dict:
+        """Livelli mostrati dai meter (dB, con caduta e picco): gli stessi per la pagina web."""
+        return {w.strip.id: [round(v, 1) for v in (*w.meter._level, *w.meter._hold)] for w in self.strips}
+
     def update_meters(self) -> None:
         for w in self.strips:
             w.update_meter()

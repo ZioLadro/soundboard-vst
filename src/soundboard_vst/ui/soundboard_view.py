@@ -6,6 +6,7 @@ testo e voce in ``config["phrases"]``): per il resto del programma sono suoni co
 
 from __future__ import annotations
 
+import math
 import shutil
 from pathlib import Path
 
@@ -29,8 +30,11 @@ from ..pads import MAX_SIZE, MIN_SIZE, PadLayout
 from .. import midi, tts
 from . import theme
 from .phrase_dialog import PhraseDialog
+from .screen import ElidedLabel
 from .sound_dialog import MidiBridge, SoundSettingsDialog, text_color_for
 
+PAD_METER_MIN_DB = -48.0
+PAD_METER_FALL_DB = 1.2      # dB per aggiornamento (~30 al secondo)
 MIME_KEY = "application/x-soundboard-key"
 MIME_PAD = "application/x-soundboard-pad"
 KEY_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -76,6 +80,9 @@ class PadButton(QWidget):
         self.emoji = ""
         self.midi_label = ""
         self.image = ""
+        self.progress = 0.0          # avanzamento della riproduzione (0..1)
+        self.level_db = PAD_METER_MIN_DB   # meter del pad, con caduta graduale
+        self.duration = 0.0
         self._hover = False
         self._press_pos: QPoint | None = None
         self.setAcceptDrops(True)
@@ -103,6 +110,20 @@ class PadButton(QWidget):
     def set_playing(self, on: bool) -> None:
         if on != self.playing:
             self.playing = on
+            self.update()
+
+    def set_activity(self, info: tuple[float, float, float] | None) -> None:
+        """(avanzamento, picco, durata) mentre suona, None quando è fermo. Chiamata ~30 volte al secondo."""
+        playing = info is not None
+        if playing:
+            progress, peak, self.duration = info
+            db = 20 * math.log10(peak) if peak > 1e-5 else PAD_METER_MIN_DB
+        else:
+            progress, db = 0.0, PAD_METER_MIN_DB
+        # sale subito, scende piano (come i meter del mixer)
+        level = db if db > self.level_db else max(db, self.level_db - PAD_METER_FALL_DB)
+        if playing != self.playing or abs(progress - self.progress) > 0.002 or abs(level - self.level_db) > 0.2:
+            self.playing, self.progress, self.level_db = playing, progress, level
             self.update()
 
     # Disegno ---------------------------------------------------------------------
@@ -172,8 +193,11 @@ class PadButton(QWidget):
             fg = QColor("#ffffff")
             muted = QColor(255, 255, 255, 190)
 
+        # testo più grande sui pad grandi (schermi 2K, griglie con pochi pad)
+        scale = max(1.0, min(1.7, min(r.width() / 120.0, r.height() / 78.0)))
+        base_pt = self.font().pointSizeF() * scale
         small = QFont(self.font())
-        small.setPointSizeF(max(7.0, self.font().pointSizeF() - 2))
+        small.setPointSizeF(max(7.0, base_pt - 2 * scale))
         p.setFont(small)
         p.setPen(muted)
         p.drawText(r.adjusted(7, 4, -7, -4), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
@@ -185,9 +209,11 @@ class PadButton(QWidget):
                        fm.elidedText(footer, Qt.TextElideMode.ElideRight, int(r.width()) - 12))
 
         content = r.adjusted(8, 12, -8, -14 if footer else -8)
+        name_font = QFont(self.font())
+        name_font.setPointSizeF(base_pt)
         if pix is not None:
             # con l'immagine il nome va in basso, sopra la velatura
-            lh = QFontMetrics(QFont(self.font())).height()
+            lh = QFontMetrics(name_font).height()
             content = QRectF(content.left(), content.bottom() - lh * 1.4 - (3 if footer else 0),
                              content.width(), lh * 1.4)
         elif self.emoji:
@@ -199,7 +225,7 @@ class PadButton(QWidget):
             p.drawText(emoji_rect, Qt.AlignmentFlag.AlignCenter, self.emoji)
             content = content.adjusted(0, esize * 1.2, 0, 0)
 
-        f = QFont(self.font())
+        f = QFont(name_font)
         f.setWeight(QFont.Weight.DemiBold)
         f.setStrikeOut(self.missing)
         p.setFont(f)
@@ -213,6 +239,39 @@ class PadButton(QWidget):
             p.drawText(content, Qt.AlignmentFlag.AlignCenter, text)
         else:
             p.drawText(content, flags, self.label)
+        if self.playing or self.level_db > PAD_METER_MIN_DB + 0.5:
+            self._paint_activity(p, r, fg)
+
+    def _paint_activity(self, p: QPainter, r: QRectF, fg: QColor) -> None:
+        """Barra di avanzamento in basso e meter verticale a destra, dentro gli angoli arrotondati."""
+        path = QPainterPath()
+        path.addRoundedRect(r.adjusted(1, 1, -1, -1), 8, 8)
+        p.save()
+        p.setClipPath(path)
+        p.setPen(Qt.PenStyle.NoPen)
+        h = max(3.0, r.height() * 0.045)
+        track = QColor(fg)
+        track.setAlphaF(0.18)
+        if self.playing:
+            bar = QRectF(r.left(), r.bottom() - h, r.width(), h)
+            p.fillRect(bar, track)
+            done = QColor(fg)
+            done.setAlphaF(0.85)
+            p.fillRect(QRectF(bar.left(), bar.top(), bar.width() * self.progress, h), done)
+        # meter: -48..0 dB, verde → giallo → rosso
+        w = max(3.0, r.width() * 0.035)
+        frac = max(0.0, min(1.0, (self.level_db - PAD_METER_MIN_DB) / -PAD_METER_MIN_DB))
+        col = QRectF(r.right() - w - 3, r.top() + 8, w, r.height() - 16 - h)
+        p.fillRect(col, track)
+        if frac > 0:
+            grad = QLinearGradient(0, col.bottom(), 0, col.top())
+            grad.setColorAt(0.0, QColor(theme.ACCENT_2))
+            grad.setColorAt(0.75, QColor("#e3c84b"))
+            grad.setColorAt(1.0, QColor(theme.DANGER))
+            lit = QRectF(col.left(), col.bottom() - col.height() * frac, col.width(), col.height() * frac)
+            p.setBrush(grad)
+            p.drawRect(lit)
+        p.restore()
 
     # Mouse ------------------------------------------------------------------------
     def enterEvent(self, event):
@@ -327,7 +386,7 @@ class SoundboardView(QWidget):
         self.setAcceptDrops(True)
 
         # Barra cartella ---------------------------------------------------------------
-        self.folder_label = QLabel()
+        self.folder_label = ElidedLabel()            # percorsi lunghi: si accorciano
         self.folder_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.folder_label.setStyleSheet(f"color: {theme.MUTED};")
         change = QPushButton("Cambia cartella…")
@@ -887,6 +946,11 @@ class SoundboardView(QWidget):
     def set_playing(self, keys: set[str]) -> None:
         for pad in self._pads:
             pad.set_playing(pad.key in keys if pad.key else False)
+
+    def set_activity(self, info: dict) -> None:
+        """Avanzamento e livello dei suoni che stanno suonando (da ``AudioEngine.voice_info``)."""
+        for pad in self._pads:
+            pad.set_activity(info.get(pad.key) if pad.key else None)
 
     def _rebuild_shortcuts(self) -> None:
         for sc in self._shortcuts:

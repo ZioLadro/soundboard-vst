@@ -45,10 +45,16 @@ class Voice:
     loop: bool = False
     preview: bool = False   # anteprima: solo in cuffia, non arriva a Discord
     strip: str = "sounds"   # canale del mixer: "sounds" o "tts" (sintesi vocale)
+    level: float = 0.0      # picco dell'ultimo blocco suonato (con il volume del pad), per i meter dei pad
 
     @property
     def done(self) -> bool:
         return self.pos >= self.data.shape[1] and not self.loop
+
+    @property
+    def progress(self) -> float:
+        n = self.data.shape[1]
+        return min(1.0, self.pos / n) if n else 1.0
 
 
 @dataclass
@@ -126,6 +132,24 @@ class AudioEngine:
         with self._voices_lock:
             return {v.key for v in self._voices}
 
+    def voice_info(self) -> dict[str, tuple[float, float, float]]:
+        """Per ogni suono che sta suonando: (avanzamento 0..1, picco attuale, durata in secondi).
+
+        Se lo stesso suono è sovrapposto più volte, l'avanzamento è quello dell'ultimo partito
+        e il picco il più alto.
+        """
+        with self._voices_lock:
+            voices = list(self._voices)
+        out: dict[str, tuple[float, float, float]] = {}
+        sr = float(self.sample_rate)
+        for v in voices:                       # in ordine di partenza: l'ultimo vince sull'avanzamento
+            if v.preview:
+                continue
+            prev = out.get(v.key)
+            level = max(v.level, prev[1]) if prev else v.level
+            out[v.key] = (v.progress, level, v.data.shape[1] / sr)
+        return out
+
     def _mix_voices(self, frames: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """(suoni, anteprime solo cuffia, sintesi vocale)."""
         main = np.zeros((2, frames), dtype=np.float32)
@@ -139,13 +163,18 @@ class AudioEngine:
             out = prev if v.preview else speech if v.strip == "tts" else main
             n_total = v.data.shape[1]
             written = 0
+            peak = 0.0
             while written < frames and (v.pos < n_total or v.loop):
                 if v.pos >= n_total:
                     v.pos = 0
                 n = min(frames - written, n_total - v.pos)
-                out[:, written:written + n] += v.data[:, v.pos:v.pos + n] * v.gain
+                chunk = v.data[:, v.pos:v.pos + n]
+                out[:, written:written + n] += chunk * v.gain
+                if n:
+                    peak = max(peak, float(np.abs(chunk).max()))
                 v.pos += n
                 written += n
+            v.level = peak * v.gain
         with self._voices_lock:
             self._voices = [v for v in self._voices if not v.done]
         return main, prev, speech
