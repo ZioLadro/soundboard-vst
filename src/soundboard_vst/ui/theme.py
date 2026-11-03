@@ -10,11 +10,16 @@ ACCENT = "#f2a93b"      # suono in riproduzione, pulsanti principali
 ACCENT_2 = "#3ec7b2"    # fader / meter
 DANGER = "#e5534b"
 
-STYLESHEET = f"""
+def stylesheet(scale: float = 1.0) -> str:
+    """Foglio di stile; ``scale`` ingrandisce tutti i testi (es. 1.1 sugli schermi 2K al 100%)."""
+    def pt(size: float) -> str:
+        return f"{size * scale:.1f}".rstrip("0").rstrip(".")
+
+    return f"""
 QWidget {{
     background: {BG};
     color: {TEXT};
-    font-size: 10pt;
+    font-size: {pt(10)}pt;
 }}
 QToolTip {{ background: {PANEL_2}; color: {TEXT}; border: 1px solid {BORDER}; padding: 4px; }}
 
@@ -26,12 +31,16 @@ QFrame#panel, QWidget#panel {{
 QLabel#sectionTitle {{
     background: transparent;
     color: {MUTED};
-    font-size: 9pt;
+    font-size: {pt(9)}pt;
     font-weight: 600;
     letter-spacing: 1px;
 }}
 QLabel#stripTitle {{ background: transparent; font-weight: 600; }}
-QLabel#dbLabel {{ background: transparent; color: {MUTED}; font-family: Consolas, monospace; font-size: 9pt; }}
+QTabBar#pages {{ background: transparent; }}
+QListWidget#sideTabs {{ background: {PANEL}; border: 1px solid {BORDER}; border-radius: 8px; padding: 4px; outline: 0; }}
+QListWidget#sideTabs::item {{ padding: 8px 10px; border-radius: 6px; }}
+QListWidget#sideTabs::item:selected {{ background: {PANEL_2}; color: {TEXT}; border-left: 3px solid {ACCENT}; }}
+QLabel#dbLabel {{ background: transparent; color: {MUTED}; font-family: Consolas, monospace; font-size: {pt(9)}pt; }}
 QLabel {{ background: transparent; }}
 
 QPushButton, QToolButton {{
@@ -109,7 +118,7 @@ QDialog {{ background: {BG}; }}
 QTabWidget#mainTabs::pane {{ border: none; }}
 QTabWidget#mainTabs > QTabBar::tab {{
     background: transparent; color: {MUTED}; padding: 8px 18px; margin-right: 4px;
-    border: none; border-bottom: 2px solid transparent; font-size: 11pt; font-weight: 600;
+    border: none; border-bottom: 2px solid transparent; font-size: {pt(11)}pt; font-weight: 600;
 }}
 QTabWidget#mainTabs > QTabBar::tab:selected {{ color: {TEXT}; border-bottom: 2px solid {ACCENT}; }}
 QTabWidget#mainTabs > QTabBar::tab:hover {{ color: {TEXT}; }}
@@ -131,3 +140,16 @@ QListWidget#library::item {{ padding: 5px 8px; border-radius: 4px; }}
 QListWidget#library::item:selected {{ background: {PANEL_2}; color: {TEXT}; }}
 QListWidget#library::item:hover {{ background: {PANEL_2}; }}
 """
+
+
+STYLESHEET = stylesheet()
+
+
+def text_scale_for(width: int, height: int) -> float:
+    """Testo un po' più grande sugli schermi molto ampi (2K/1440p senza ridimensionamento di Windows)."""
+    if width >= 3400:
+        return 1.25
+    if width >= 2400 and height >= 1300:
+        return 1.12
+    return 1.0
+

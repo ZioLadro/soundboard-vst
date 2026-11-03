@@ -17,6 +17,7 @@ from ..audio.library import shape, shape_params
 from ..config import config_dir
 from . import theme
 from .waveform import WaveformEditor
+from .screen import fit_to_screen, scrollable
 
 PALETTE = [
     ("Rosso", "#e5534b"), ("Arancio", "#f0883e"), ("Giallo", "#d4a72c"), ("Verde", "#57ab5a"),
@@ -132,12 +133,12 @@ class SoundSettingsDialog(QDialog):
         for box in (self.t_start, self.t_end, self.t_in, self.t_out):
             box.valueChanged.connect(self._from_boxes)
         self.wave.changed.connect(self._from_wave)
-        trow = QHBoxLayout()
-        for label, box in (("Inizio", self.t_start), ("Fine", self.t_end),
-                           ("Dissolvenza in entrata", self.t_in), ("in uscita", self.t_out)):
-            trow.addWidget(QLabel(label))
-            trow.addWidget(box)
-        trow.addStretch(1)
+        trow = QGridLayout()                       # due righe: sta anche nelle finestre strette
+        for i, (label, box) in enumerate((("Inizio", self.t_start), ("Fine", self.t_end),
+                                          ("Dissolvenza in entrata", self.t_in), ("in uscita", self.t_out))):
+            trow.addWidget(QLabel(label), i // 2, (i % 2) * 2)
+            trow.addWidget(box, i // 2, (i % 2) * 2 + 1)
+        trow.setColumnStretch(4, 1)
         listen = QPushButton("▶  Ascolta")
         listen.setToolTip("Anteprima solo in cuffia, con taglio, dissolvenze e volume scelti")
         listen.clicked.connect(self._listen)
@@ -261,9 +262,13 @@ class SoundSettingsDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
+        body = QWidget()
+        body.setLayout(form)
         lay = QVBoxLayout(self)
-        lay.addLayout(form)
+        lay.addWidget(scrollable(body, horizontal=False), 1)   # su schermi bassi si scorre
         lay.addWidget(buttons)
+        # larga quanto serve al contenuto (più la barra di scorrimento), alta al massimo quanto lo schermo
+        fit_to_screen(self, max(640, body.minimumSizeHint().width() + 48), body.sizeHint().height() + 70)
 
         self._set_color(self.color)
         self._set_midi(self.midi_binding)

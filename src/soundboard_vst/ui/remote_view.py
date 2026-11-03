@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import math
+import threading
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
@@ -12,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import discord_bot, eventlog, importer, youtube
+from ..audio.plugins import BUILTIN_EFFECTS, create_builtin, load_vst3, vst3_names_in_file
 from ..eventlog import acting
 from ..remote.server import RemoteServer, is_tailscale, local_addresses, new_token
 from . import theme
@@ -25,13 +28,17 @@ class RemoteController(QObject):
 
     command = Signal(object)
     status_changed = Signal()
+    _query = Signal(object)
 
     def __init__(self, window):
         super().__init__(window)
         self.w = window
         self._state: dict = {}
-        self.server = RemoteServer(lambda: self._state, self.command.emit, self._image_for)
+        self.levels: dict = {"strips": {}, "pads": {}}      # aggiornati dalla finestra ~30 volte al secondo
+        self.server = RemoteServer(lambda: self._state, self.command.emit, self._image_for,
+                                   get_levels=lambda: self.levels, query=self.query)
         self.command.connect(self._run)
+        self._query.connect(self._answer)
         self._timer = QTimer(self, interval=250)
         self._timer.timeout.connect(self._snapshot)
 
@@ -88,6 +95,57 @@ class RemoteController(QObject):
         self._timer.stop()
         self.server.stop()
 
+    # Domande dal server (thread del server → thread dell'interfaccia) ----------------------
+    def query(self, name: str, args: dict, timeout: float = 5.0) -> dict | None:
+        """Bloccante: da chiamare fuori dal thread dell'interfaccia (lo fa il server)."""
+        box: dict = {}
+        done = threading.Event()
+        self._query.emit((name, args, box, done))
+        done.wait(timeout)
+        return box.get("result")
+
+    def _answer(self, job) -> None:
+        name, args, box, done = job
+        try:
+            if name == "effects":
+                box["result"] = self._effects()
+            elif name == "insert":
+                box["result"] = self._insert_info(str(args.get("strip")), int(args.get("index", -1)))
+        except Exception:
+            box["result"] = None
+        finally:
+            done.set()
+
+    def _effects(self) -> dict:
+        return {"builtin": [{"type": t, "label": label} for t, (label, _) in BUILTIN_EFFECTS.items()],
+                "vst": [{"path": str(p), "name": p.stem} for p in self.w.vst_plugins()]}
+
+    def _insert_info(self, strip_id: str, index: int) -> dict | None:
+        strip = self.w.engine.strip(strip_id)
+        if not 0 <= index < len(strip.inserts):
+            return None
+        slot = strip.inserts[index]
+        params = []
+        if slot.kind == "builtin":
+            for spec in slot.param_specs():
+                params.append({"name": spec.attr, "label": spec.label, "min": spec.minimum, "max": spec.maximum,
+                               "value": float(getattr(slot.plugin, spec.attr, spec.default)), "unit": spec.unit})
+        else:
+            try:
+                items = list(slot.plugin.parameters.items())[:400]
+            except Exception:
+                items = []
+            for key, param in items:
+                try:
+                    value = float(param.raw_value)
+                    text = str(param.string_value)
+                except Exception:
+                    continue
+                params.append({"name": key, "label": getattr(param, "name", key), "min": 0.0, "max": 1.0,
+                               "value": value, "text": text, "raw": True})
+        return {"strip": strip_id, "index": index, "name": slot.display_name, "kind": slot.kind,
+                "bypass": slot.bypass, "params": params, "has_editor": slot.has_editor}
+
     # Stato --------------------------------------------------------------------------------
     def _image_for(self, key: str) -> Path | None:
         cfg = self.w.config.data["sounds"].get(key)        # solo immagini di suoni configurati
@@ -98,6 +156,7 @@ class RemoteController(QObject):
         w = self.w
         eng, board = w.engine, w.board
         playing = eng.playing_keys()
+        activity = eng.voice_info()
         sounds = w.config.data["sounds"]
         lay = board.layout_model
         pages = []
@@ -110,6 +169,7 @@ class RemoteController(QObject):
                         "key": key, "label": board.display_name(key), "emoji": board._emoji(key),
                         "color": c.get("color", ""), "image": bool(c.get("image")) and Path(c["image"]).is_file(),
                         "playing": key in playing, "missing": not board.exists(key),
+                        "duration": round(activity[key][2], 2) if key in activity else None,
                     }
             pages.append({"name": pg.name, "pads": pads})
         library = [{"key": key, "label": board.display_name(key), "emoji": board._emoji(key)}
@@ -127,7 +187,11 @@ class RemoteController(QObject):
                 "message": w.player_view.last_message,
                 "queue": [{"title": t.title, "duration": t.duration, "kind": t.kind} for t in p.tracks[:300]],
             },
-            "strips": [{"id": s.id, "name": s.name, "gain_db": s.gain_db, "mute": s.mute} for s in eng.strips],
+            "strips": [{"id": s.id, "name": s.name, "gain_db": s.gain_db, "mute": s.mute,
+                        "inserts": [{"name": slot.display_name, "kind": slot.kind, "bypass": slot.bypass,
+                                     "failed": slot.failed} for slot in s.inserts]} for s in eng.strips],
+            "monitor": {"hear_sounds": eng.monitor_hear_sounds, "hear_tts": eng.monitor_hear_tts,
+                        "hear_player": eng.monitor_hear_player, "hear_mic": eng.monitor_hear_mic},
             "bot": {"available": discord_bot.available(), "running": bot.running, "online": bot.status.online,
                     "channel": bot.status.channel, "message": bot.status.message},
             "audio": {"running": eng.status.running},
@@ -202,6 +266,14 @@ class RemoteController(QObject):
                     eventlog.log(eventlog.SOUND, f"{'Muto' if strip.mute else 'Audio attivo'}: {strip.name}")
                 w.mixer.sync_levels()
                 w.schedule_save()
+            elif cmd == "insert":
+                self._insert(c)
+            elif cmd == "monitor":
+                for key in ("hear_sounds", "hear_tts", "hear_player", "hear_mic"):
+                    if key in c:
+                        setattr(w.engine, f"monitor_{key}", bool(c[key]))
+                w.mixer.sync_from_model()
+                w.schedule_save()
             elif cmd == "bot":
                 action = c.get("action")
                 if action == "toggle":
@@ -212,6 +284,60 @@ class RemoteController(QObject):
                     w.leave_bot()
         except (StopIteration, ValueError, TypeError, KeyError):
             pass      # comando malformato: ignorato
+
+    def _insert(self, c: dict) -> None:
+        """Inserti di un canale dal telefono: aggiungi, togli, sposta, bypass, parametri."""
+        w = self.w
+        strip = w.engine.strip(str(c.get("strip")))
+        action = c.get("action")
+        index = int(c.get("index", -1)) if "index" in c else -1
+        slot = strip.inserts[index] if 0 <= index < len(strip.inserts) else None
+        if action == "add":
+            t = str(c.get("type"))
+            if t in BUILTIN_EFFECTS:
+                strip.add_insert(create_builtin(t))
+                eventlog.log(eventlog.SOUND, f"Inserto {BUILTIN_EFFECTS[t][0]} aggiunto su {strip.name}")
+        elif action == "add_vst":
+            path = str(c.get("path", ""))
+            if path not in {str(p) for p in w.vst_plugins()}:
+                return                                    # solo plugin delle cartelle VST3 già analizzate
+            names = vst3_names_in_file(path)
+            try:
+                new = load_vst3(path, names[0] if len(names) > 1 else None)
+            except Exception as exc:
+                eventlog.log(eventlog.ERROR, f"Plugin {Path(path).stem} non caricato: {exc}")
+                return
+            strip.add_insert(new)
+            eventlog.log(eventlog.SOUND, f"Plugin {new.display_name} aggiunto su {strip.name}")
+        elif action == "rescan":
+            w.rescan_vst()
+        elif slot is None:
+            return
+        elif action == "remove":
+            strip.remove_insert(slot)
+            eventlog.log(eventlog.SOUND, f"Inserto {slot.display_name} tolto da {strip.name}")
+        elif action == "move":
+            strip.move_insert(slot, -1 if int(c.get("delta", 0)) < 0 else 1)
+        elif action == "bypass":
+            slot.bypass = bool(c.get("value"))
+            if not slot.bypass:
+                slot.failed = False                       # riprova dopo un errore
+        elif action == "param":
+            name, value = str(c.get("name")), float(c.get("value"))
+            if not math.isfinite(value):
+                return
+            if slot.kind == "builtin":
+                spec = next((sp for sp in slot.param_specs() if sp.attr == name), None)
+                if spec is not None:
+                    setattr(slot.plugin, name, max(spec.minimum, min(spec.maximum, value)))
+            else:
+                param = slot.plugin.parameters.get(name)
+                if param is not None:
+                    param.raw_value = max(0.0, min(1.0, value))
+        else:
+            return
+        w.mixer.sync_from_model()
+        w.schedule_save()
 
     def _player(self, c: dict) -> None:
         p = self.w.engine.player

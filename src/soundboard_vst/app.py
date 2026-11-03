@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import sys
 import threading
 from pathlib import Path
@@ -25,6 +26,7 @@ from .discord_bot import DiscordBot
 from .config import Config, config_dir
 from .ui import theme
 from .ui.log_view import LogView
+from .ui.screen import ElidedLabel, initial_window_size, keep_on_screen, scrollable
 from .ui.mixer_view import MixerView
 from .ui.player_view import PlayerView
 from .ui.remote_view import RemoteController, RemoteDialog
@@ -68,7 +70,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.config = config
         self.setWindowTitle(APP_NAME)
-        self.resize(1100, 760)
+        self.resize(initial_window_size(self))      # poi, se c'è, la posizione salvata
 
         a = config.data["audio"]
         self.engine = AudioEngine(a.get("sample_rate", 48000), a.get("block_size", 512))
@@ -86,7 +88,7 @@ class MainWindow(QMainWindow):
         self.audio_btn.clicked.connect(self.toggle_audio)
         settings_btn = QPushButton("Impostazioni")
         settings_btn.clicked.connect(self.open_settings)
-        self.route_label = QLabel()
+        self.route_label = ElidedLabel()              # nomi dei dispositivi lunghi: si accorciano
         self.route_label.setStyleSheet(f"color: {theme.MUTED};")
         header = QHBoxLayout()
         header.addWidget(title)
@@ -140,7 +142,7 @@ class MainWindow(QMainWindow):
         mixer_page = QWidget()
         mp = QVBoxLayout(mixer_page)
         mp.setContentsMargins(0, 8, 0, 0)
-        mp.addWidget(self.mixer, 1)
+        mp.addWidget(scrollable(self.mixer), 1)       # su schermi stretti i canali scorrono
 
         self.tabs = QTabWidget()
         self.tabs.setObjectName("mainTabs")
@@ -818,13 +820,20 @@ class MainWindow(QMainWindow):
         w = self.config.data.get("window", {})
         if w.get("geometry"):
             self.restoreGeometry(QByteArray.fromBase64(w["geometry"].encode()))
+            keep_on_screen(self)                       # es. salvata su uno schermo più grande
         if w.get("library_splitter"):
             self.board.splitter.restoreState(QByteArray.fromBase64(w["library_splitter"].encode()))
         self.tabs.setCurrentIndex(int(w.get("tab", 0)) if str(w.get("tab", 0)).isdigit() else 0)
 
     def _tick(self) -> None:
         self.mixer.update_meters()
-        self.board.set_playing(self.engine.playing_keys())
+        self.pad_activity = self.engine.voice_info()
+        self.board.set_activity(self.pad_activity)
+        if self.remote.server.running:            # gli stessi meter per la pagina web
+            self.remote.levels = {
+                "strips": self.mixer.levels(),
+                "pads": {k: [round(p, 3), round(20 * math.log10(lv), 1) if lv > 1e-5 else -99.0, round(d, 2)]
+                         for k, (p, lv, d) in self.pad_activity.items()}}
         if self.engine.status.running:
             self.status_label.setText(f"{self.engine.sample_rate} Hz · buffer {self.engine.block_size}"
                                       f" · dropout {self.engine.xruns}")
@@ -851,7 +860,9 @@ def main() -> None:
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(__version__)
     app.setStyle("Fusion")
-    app.setStyleSheet(theme.STYLESHEET)
+    screen = app.primaryScreen()
+    size = screen.availableGeometry().size() if screen is not None else None
+    app.setStyleSheet(theme.stylesheet(theme.text_scale_for(size.width(), size.height()) if size else 1.0))
     window = MainWindow(Config())
     window.show()
     sys.exit(app.exec())

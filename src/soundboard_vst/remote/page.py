@@ -56,11 +56,45 @@ input[type=text]{flex:1;font:inherit;color:var(--text);background:var(--panel2);
 .queue li{padding:10px 8px;border-bottom:1px solid var(--panel2);display:flex;gap:8px;cursor:pointer}
 .queue li.cur{color:var(--accent);font-weight:700}
 .queue li span:first-child{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.strip{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--panel2)}
-.strip .db{font:12px ui-monospace,Consolas,monospace;color:var(--muted)}
-.strip button.mute{padding:6px 10px;font-weight:700;font-size:12px}
-.strip button.mute.on{background:var(--danger);color:#fff;border:none}
-.strip input{grid-column:1/3}
+.pad .prog{position:absolute;left:0;bottom:0;height:4px;width:0;background:currentColor;opacity:.85;display:none}
+.pad .vu{position:absolute;right:4px;top:8px;bottom:10px;width:4px;border-radius:2px;background:rgba(255,255,255,.12);display:none;overflow:hidden}
+.pad .vu i{position:absolute;left:0;right:0;bottom:0;height:0;background:linear-gradient(to top,var(--accent2) 0%,#e3c84b 75%,var(--danger) 100%);background-size:100% var(--vuh,100px);background-position:bottom}
+.pad.playing .prog,.pad.active .vu{display:block}
+/* Mixer: stesse colonne del programma */
+.mixer{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;scroll-snap-type:x proximity}
+.mstrip{flex:0 0 156px;scroll-snap-align:start;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:6px}
+.mtitle{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sect{color:var(--muted);font-size:11px;font-weight:600;letter-spacing:.04em}
+.ins{list-style:none;margin:0;padding:0;background:var(--bg);border:1px solid var(--border);border-radius:6px;min-height:86px;max-height:150px;overflow-y:auto}
+.ins li{display:flex;align-items:center;gap:6px;padding:6px;border-bottom:1px solid var(--panel2);font-size:13px;cursor:pointer}
+.ins li.sel{background:var(--panel2)}
+.ins li span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ins li.off span{color:var(--muted);text-decoration:line-through}
+.ins li.err span{color:var(--danger)}
+.ins input{margin:0;accent-color:var(--accent2);width:16px;height:16px}
+.itools{display:flex;gap:4px}
+.itools button{flex:1;padding:4px 0;font-size:13px;border-radius:6px}
+.hear label{display:flex;align-items:center;gap:6px;font-size:13px;padding:2px 0}
+.hear input{accent-color:var(--accent2);width:16px;height:16px;margin:0}
+.fm{display:flex;justify-content:center;align-items:flex-end;gap:12px;padding:6px 0;flex:1}
+.fader{position:relative;width:26px;height:230px;touch-action:none;cursor:ns-resize}
+.fader .track{position:absolute;left:10px;width:6px;top:0;bottom:0;background:var(--bg);border-radius:3px}
+.fader .fill{position:absolute;left:10px;width:6px;bottom:0;background:var(--accent2);border-radius:3px}
+.fader .thumb{position:absolute;left:0;width:26px;height:16px;margin-bottom:-8px;background:#e6e8ee;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,.5)}
+canvas.vu{width:22px;height:230px}
+.mstrip .db{text-align:center;font:12px ui-monospace,Consolas,monospace;color:var(--muted)}
+.mstrip button.mute{padding:6px 0;font-weight:700;font-size:13px}
+.mstrip button.mute.on{background:var(--danger);color:#fff;border:none}
+/* Pannello dal basso (aggiungi inserto, parametri) */
+.sheet{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;z-index:20;align-items:flex-end;justify-content:center}
+.sheet.open{display:flex}
+.sheet .box{background:var(--panel);border:1px solid var(--border);border-radius:14px 14px 0 0;width:min(560px,100%);max-height:82vh;overflow-y:auto;padding:14px 14px calc(14px + env(safe-area-inset-bottom))}
+.sheet h3{margin:0 0 10px;font-size:16px;display:flex;align-items:center;gap:8px}
+.sheet h3 span{flex:1}
+.sheet .opt{display:block;width:100%;text-align:left;margin-bottom:6px}
+.prm{padding:6px 0;border-bottom:1px solid var(--panel2)}
+.prm .row span:first-child{flex:1;font-size:13px}
+.prm .val{font:12px ui-monospace,Consolas,monospace;color:var(--muted);min-width:70px;text-align:right}
 .offline{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--danger);color:#fff;padding:8px 14px;border-radius:99px;font-size:13px;display:none;z-index:9}
 .botbtns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
 .botbtns button{flex:1}
@@ -118,7 +152,8 @@ input[type=text]{flex:1;font:inherit;color:var(--text);background:var(--panel2);
     <div class="card"><ul class="queue" id="queue"></ul></div>
   </section>
   <section id="mixer">
-    <div class="card" id="strips"></div>
+    <div class="mixer" id="strips"></div>
+    <div class="muted" style="margin:4px 2px 12px">Tocca un inserto per selezionarlo · ✓ = attivo (togli la spunta per il bypass) · ✎ parametri. L'interfaccia grafica dei plugin si apre solo sul PC.</div>
     <div class="card">
       <div class="row"><b style="flex:1">Bot Discord</b><span class="muted" id="botmsg"></span></div>
       <div class="botbtns">
@@ -130,6 +165,7 @@ input[type=text]{flex:1;font:inherit;color:var(--text);background:var(--panel2);
   </section>
 </main>
 <div class="offline" id="offline">Soundboard non raggiungibile…</div>
+<div class="sheet" id="sheet"><div class="box"><h3><span id="sheet-title"></span><button id="sheet-close">✕</button></h3><div id="sheet-body"></div></div></div>
 <script>
 const $ = s => document.querySelector(s);
 let S = null, page = null, seeking = false, dragging = {};
@@ -201,8 +237,9 @@ function renderPads(){
     if (p.playing) d.classList.add("playing");
     if (p.missing) d.classList.add("missing");
     const em = p.emoji && !p.image ? `<div class="em">${p.emoji}</div>` : "";
-    d.innerHTML = `<span class="n">${i+1}</span>${em}<div class="lb"></div>`;
+    d.innerHTML = `<span class="n">${i+1}</span>${em}<div class="lb"></div><i class="prog"></i><span class="vu"><i></i></span>`;
     d.querySelector(".lb").textContent = p.label;
+    d.dataset.key = p.key;
     d.onclick = () => { send({cmd:"pad", page, index:i}); d.classList.add("playing"); };
     g.appendChild(d);
   });
@@ -229,30 +266,178 @@ function renderPlayer(){
   }
 }
 
+const MIN_DB = -60, MAX_DB = 12, VU_MIN = -60, VU_MAX = 6;
+let selected = {}, sheetFor = null;
+const dbToFrac = d => (Math.max(MIN_DB, Math.min(MAX_DB, d)) - MIN_DB) / (MAX_DB - MIN_DB);
+const vuFrac = d => Math.max(0, Math.min(1, (d - VU_MIN) / (VU_MAX - VU_MIN)));
+const HEAR = [["hear_sounds","Suoni"],["hear_tts","Voce"],["hear_player","Player"],["hear_mic","Microfono"]];
+
+function buildStrip(s){
+  const el = document.createElement("div"); el.className = "mstrip"; el.dataset.id = s.id;
+  el.innerHTML = `<div class="mtitle"></div><div class="sect">INSERTI</div><ul class="ins"></ul>
+    <div class="itools"><button data-a="add" title="Aggiungi">+</button><button data-a="remove" title="Togli">−</button>
+    <button data-a="up" title="Su">▲</button><button data-a="down" title="Giù">▼</button><button data-a="edit" title="Parametri">✎</button></div>
+    ${s.id === "monitor" ? `<div class="sect">ASCOLTA</div><div class="hear">${HEAR.map(([k,l]) => `<label><input type="checkbox" data-h="${k}"> ${l}</label>`).join("")}</div>` : ""}
+    <div class="fm"><div class="fader"><div class="track"></div><div class="fill"></div><div class="thumb"></div></div><canvas class="vu" width="44" height="460"></canvas></div>
+    <div class="db"></div><button class="mute">MUTE</button>`;
+  el.querySelector(".mtitle").textContent = s.name;
+  el.querySelector(".mute").onclick = () => send({cmd:"strip", id:s.id, mute: !strip(s.id).mute});
+  el.querySelectorAll("[data-h]").forEach(c => c.onchange = () => send({cmd:"monitor", [c.dataset.h]: c.checked}));
+  el.querySelectorAll("[data-a]").forEach(b => b.onclick = () => insertAction(s.id, b.dataset.a));
+  setupFader(el, s.id);
+  return el;
+}
+const strip = id => S.strips.find(x => x.id === id);
+
+function setupFader(el, id){
+  const f = el.querySelector(".fader");
+  let last = 0;
+  const at = e => { const r = f.getBoundingClientRect();
+    const frac = 1 - Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
+    return Math.round((MIN_DB + frac * (MAX_DB - MIN_DB)) * 2) / 2; };
+  const set = (db, force) => { showFader(el, db); const now = Date.now();
+    if (force || now - last > 60){ last = now; send({cmd:"strip", id, gain_db: db}); } };
+  f.onpointerdown = e => { f.setPointerCapture(e.pointerId); dragging[id] = true; set(at(e)); };
+  f.onpointermove = e => { if (dragging[id]) set(at(e)); };
+  f.onpointerup = f.onpointercancel = e => { if (dragging[id]){ set(at(e), true); dragging[id] = false; } };
+  f.ondblclick = () => set(0, true);
+}
+function showFader(el, db){
+  const fr = dbToFrac(db);
+  el.querySelector(".fill").style.height = (fr * 100) + "%";
+  el.querySelector(".thumb").style.bottom = (fr * 100) + "%";
+  el.querySelector(".db").textContent = fmtDb(db);
+}
+
 function renderMixer(){
   const box = $("#strips"), sig = S.strips.map(s => s.id).join();
   if (box.dataset.sig !== sig){
     box.dataset.sig = sig; box.innerHTML = "";
-    S.strips.forEach(s => { const el = document.createElement("div"); el.className = "strip"; el.dataset.id = s.id;
-      el.innerHTML = `<div><b></b> <span class="db"></span></div><button class="mute">MUTE</button>
-        <input type="range" min="-600" max="120" step="5">`;
-      el.querySelector("b").textContent = s.name;
-      const r = el.querySelector("input");
-      r.oninput = () => { dragging[s.id] = true; el.querySelector(".db").textContent = fmtDb(r.value/10);
-        send({cmd:"strip", id:s.id, gain_db:r.value/10}); };
-      r.onchange = () => dragging[s.id] = false;
-      el.querySelector(".mute").onclick = () => send({cmd:"strip", id:s.id, mute: !S.strips.find(x => x.id === s.id).mute});
-      box.appendChild(el); });
+    S.strips.forEach(s => box.appendChild(buildStrip(s)));
   }
   S.strips.forEach(s => { const el = box.querySelector(`[data-id="${s.id}"]`); if (!el) return;
-    if (!dragging[s.id]){ el.querySelector("input").value = Math.round(s.gain_db*10); el.querySelector(".db").textContent = fmtDb(s.gain_db); }
-    el.querySelector(".mute").classList.toggle("on", s.mute); });
+    if (!dragging[s.id]) showFader(el, s.gain_db);
+    el.querySelector(".mute").classList.toggle("on", s.mute);
+    const ul = el.querySelector(".ins"), isig = JSON.stringify([s.inserts, selected[s.id]]);
+    if (ul.dataset.sig !== isig){
+      ul.dataset.sig = isig; ul.innerHTML = "";
+      if (selected[s.id] >= s.inserts.length) selected[s.id] = s.inserts.length - 1;
+      s.inserts.forEach((ins, i) => { const li = document.createElement("li");
+        li.className = (i === selected[s.id] ? "sel " : "") + (ins.bypass ? "off " : "") + (ins.failed ? "err" : "");
+        li.innerHTML = `<input type="checkbox" ${ins.bypass ? "" : "checked"}><span></span>`;
+        li.querySelector("span").textContent = ins.name + (ins.failed ? " (errore)" : "");
+        li.querySelector("input").onclick = e => { e.stopPropagation();
+          send({cmd:"insert", strip:s.id, action:"bypass", index:i, value: !e.target.checked}); };
+        li.onclick = () => { selected[s.id] = i; renderMixer(); };
+        li.ondblclick = () => { selected[s.id] = i; openParams(s.id, i); };
+        ul.appendChild(li); });
+    }
+    if (s.id === "monitor" && S.monitor) el.querySelectorAll("[data-h]").forEach(c => c.checked = !!S.monitor[c.dataset.h]);
+  });
   const B = S.bot, chip = $("#botchip");
   chip.textContent = !B.available ? "🤖 non disponibile" : B.channel ? `🤖 ${B.channel}` : B.online ? "🤖 online" : B.running ? "🤖 connessione…" : "🤖 spento";
   chip.classList.toggle("on", !!B.channel);
   $("#botmsg").textContent = B.message || "";
   $("#bot-toggle").textContent = B.running ? "⏻ Ferma" : "⏻ Avvia";
 }
+
+function insertAction(id, a){
+  const i = selected[id], n = strip(id).inserts.length, ok = i != null && i >= 0 && i < n;
+  if (a === "add") return openAdd(id);
+  if (!ok) return;
+  if (a === "remove") send({cmd:"insert", strip:id, action:"remove", index:i});
+  if (a === "up" && i > 0){ send({cmd:"insert", strip:id, action:"move", index:i, delta:-1}); selected[id] = i - 1; }
+  if (a === "down" && i < n - 1){ send({cmd:"insert", strip:id, action:"move", index:i, delta:1}); selected[id] = i + 1; }
+  if (a === "edit") openParams(id, i);
+}
+
+function openSheet(title){ $("#sheet-title").textContent = title; $("#sheet-body").innerHTML = ""; $("#sheet").classList.add("open"); return $("#sheet-body"); }
+function closeSheet(){ $("#sheet").classList.remove("open"); sheetFor = null; }
+$("#sheet-close").onclick = closeSheet;
+$("#sheet").onclick = e => { if (e.target.id === "sheet") closeSheet(); };
+
+async function openAdd(id){
+  const body = openSheet(`Aggiungi inserto — ${strip(id).name}`);
+  body.innerHTML = '<div class="muted">Carico l\'elenco…</div>';
+  let E; try { E = await (await fetch("/api/effects", {cache:"no-store"})).json(); } catch(e){ body.textContent = "Elenco non disponibile."; return; }
+  body.innerHTML = '<div class="sect">EFFETTI INTEGRATI</div>';
+  E.builtin.forEach(fx => { const b = document.createElement("button"); b.className = "opt"; b.textContent = fx.label;
+    b.onclick = () => { send({cmd:"insert", strip:id, action:"add", type:fx.type}); selected[id] = strip(id).inserts.length; closeSheet(); };
+    body.appendChild(b); });
+  const h = document.createElement("div"); h.className = "sect"; h.style.marginTop = "12px"; h.textContent = "PLUGIN VST3"; body.appendChild(h);
+  if (!E.vst.length){ const m = document.createElement("div"); m.className = "muted"; m.textContent = "Nessun plugin trovato nelle cartelle VST3."; body.appendChild(m); }
+  E.vst.forEach(v => { const b = document.createElement("button"); b.className = "opt"; b.textContent = v.name; b.title = v.path;
+    b.onclick = () => { send({cmd:"insert", strip:id, action:"add_vst", path:v.path}); selected[id] = strip(id).inserts.length; closeSheet(); };
+    body.appendChild(b); });
+  const rs = document.createElement("button"); rs.className = "opt"; rs.textContent = "↻ Riscansiona le cartelle VST3";
+  rs.onclick = () => { send({cmd:"insert", strip:id, action:"rescan"}); setTimeout(() => openAdd(id), 800); };
+  body.appendChild(rs);
+}
+
+const fmtVal = (v, u) => (Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(2)) + (u ? " " + u : "");
+async function openParams(id, i){
+  const body = openSheet("Parametri");
+  sheetFor = [id, i];
+  let P; try { P = await (await fetch(`/api/insert?strip=${encodeURIComponent(id)}&index=${i}`, {cache:"no-store"})).json(); }
+  catch(e){ body.textContent = "Parametri non disponibili."; return; }
+  if (P.error){ body.textContent = "Inserto non trovato."; return; }
+  $("#sheet-title").textContent = `${P.name} — ${strip(id).name}`;
+  if (!P.params.length){ body.innerHTML = '<div class="muted">Questo inserto non ha parametri regolabili da qui.</div>'; return; }
+  if (P.params.length > 12){ const q = document.createElement("input"); q.type = "text"; q.placeholder = "Filtra parametri…";
+    q.style.width = "100%"; q.oninput = () => body.querySelectorAll(".prm").forEach(r => r.style.display = r.dataset.n.includes(q.value.toLowerCase()) ? "" : "none");
+    body.appendChild(q); }
+  const timers = {};
+  P.params.forEach(pr => { const r = document.createElement("div"); r.className = "prm"; r.dataset.n = pr.label.toLowerCase();
+    const step = pr.raw ? 0.001 : (pr.max - pr.min) / 500;
+    r.innerHTML = `<div class="row"><span></span><span class="val"></span></div><input type="range" min="${pr.min}" max="${pr.max}" step="${step}" value="${pr.value}">`;
+    r.querySelector("span").textContent = pr.label;
+    const val = r.querySelector(".val"), inp = r.querySelector("input");
+    val.textContent = pr.raw ? pr.text : fmtVal(pr.value, pr.unit);
+    inp.oninput = () => { const v = parseFloat(inp.value);
+      if (!pr.raw) val.textContent = fmtVal(v, pr.unit);
+      clearTimeout(timers[pr.name]);
+      timers[pr.name] = setTimeout(async () => { await send({cmd:"insert", strip:id, action:"param", index:i, name:pr.name, value:v});
+        if (pr.raw){ try { const Q = await (await fetch(`/api/insert?strip=${encodeURIComponent(id)}&index=${i}`, {cache:"no-store"})).json();
+          const x = Q.params.find(q => q.name === pr.name); if (x) val.textContent = x.text; } catch(e){} } }, 70); };
+    body.appendChild(r); });
+}
+
+// Meter: canali del mixer e pad, ~8 volte al secondo
+const padAnim = {};
+function drawVu(cv, l, r, hl, hr){
+  const c = cv.getContext("2d"), W = cv.width, H = cv.height, bw = W/2 - 3;
+  c.clearRect(0, 0, W, H);
+  [[l, hl], [r, hr]].forEach(([lv, hd], k) => { const x = k * (bw + 6);
+    c.fillStyle = "#15171c"; c.fillRect(x, 0, bw, H);
+    const h = vuFrac(lv) * H, g = c.createLinearGradient(0, H, 0, 0);
+    g.addColorStop(0, "#3ec7b2"); g.addColorStop(vuFrac(-12), "#3ec7b2"); g.addColorStop(vuFrac(-3), "#e3c84b"); g.addColorStop(vuFrac(0), "#e5534b");
+    c.fillStyle = g; c.fillRect(x, H - h, bw, h);
+    if (hd > VU_MIN + 1){ c.fillStyle = hd < 0 ? "#e6e8ee" : "#e5534b"; c.fillRect(x, H - vuFrac(hd) * H - 2, bw, 3); } });
+}
+async function pollLevels(){
+  if (document.hidden || !S) return;
+  let L; try { L = await (await fetch("/api/levels", {cache:"no-store"})).json(); } catch(e){ return; }
+  if ($("#mixer").classList.contains("sel"))
+    Object.entries(L.strips || {}).forEach(([id, v]) => { const el = document.querySelector(`.mstrip[data-id="${id}"] canvas`); if (el) drawVu(el, ...v); });
+  const now = performance.now();
+  Object.entries(L.pads || {}).forEach(([key, [p, db, d]]) => { padAnim[key] = {p, d, t: now, db: Math.max(db, (padAnim[key] || {}).db ?? -99)}; });
+  Object.keys(padAnim).forEach(k => { if (!(L.pads || {})[k]) padAnim[k].gone = true; });
+}
+function animatePads(){
+  const now = performance.now();
+  document.querySelectorAll(".pad[data-key]").forEach(el => { const a = padAnim[el.dataset.key];
+    if (!a){ el.classList.remove("active"); return; }
+    const dt = (now - a.t) / 1000;
+    a.db = Math.max(-99, a.db - 36 * Math.min(dt, .05));            // caduta come sul PC
+    const prog = a.gone ? 1 : Math.min(1, a.p + (a.d ? dt / a.d : 0));
+    el.querySelector(".prog").style.width = (prog * 100) + "%";
+    el.querySelector(".vu i").style.height = (Math.max(0, Math.min(1, (a.db + 48) / 48)) * 100) + "%";
+    el.classList.toggle("active", a.db > -47 || !a.gone);
+    if (a.gone && a.db <= -47){ delete padAnim[el.dataset.key]; el.classList.remove("active"); } });
+  requestAnimationFrame(animatePads);
+}
+requestAnimationFrame(animatePads);
+setInterval(pollLevels, 125);
 
 function render(){ if (!S) return; renderPads(); renderPlayer(); renderMixer(); }
 

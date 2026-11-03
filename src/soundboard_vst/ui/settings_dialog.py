@@ -6,7 +6,7 @@ from PySide6.QtCore import QRegularExpression, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence, QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QSlider, QAbstractItemView, QHeaderView, QKeySequenceEdit, QTableWidget, QTableWidgetItem, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
-    QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QScrollArea, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
+    QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from .. import discord_bot, midi, midi_map, tts
@@ -15,6 +15,7 @@ from ..config import Config, default_vst3_dirs
 from ..discord_bot import normalize_greetings
 from ..discord_commands import normalize_permissions
 from .discord_settings import GreetingsEditor, PermissionsEditor
+from .screen import SideTabs, fit_to_screen
 from . import theme
 from .phrase_dialog import VoiceCombo
 
@@ -32,8 +33,7 @@ class SettingsDialog(QDialog):
         self._learning_target: str | None = None
         self._map: dict[str, dict] = {k: dict(v) for k, v in config.data.get("midi_map", {}).items()}
         self.setWindowTitle("Impostazioni")
-        self.setMinimumWidth(620)
-        self.resize(720, 640)
+        self.setMinimumSize(560, 420)
         self.config = config
         a = config.data["audio"]
 
@@ -376,7 +376,7 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
 
-        self.tabs = QTabWidget()
+        self.tabs = SideTabs()                         # 8 sezioni: elenco a sinistra invece delle schede
         for box, title in ((audio_box, "Audio"), (midi_box, "MIDI"), (bot_box, "Bot Discord"),
                            (vst_box, "Plugin VST3"), (remote_box, "Controllo remoto"),
                            (tts_box, "Sintesi vocale"), (perm_box, "Permessi Discord"),
@@ -394,6 +394,7 @@ class SettingsDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.addWidget(self.tabs, 1)
         lay.addWidget(buttons)
+        fit_to_screen(self, 940, 720)
 
         self._fill_host_apis()
         self._fill_midi()

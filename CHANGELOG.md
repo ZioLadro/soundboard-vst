@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.8.1 — 2026-11-03
+
+### Novità
+- **Avanzamento e meter sui pad**: mentre un suono suona, il pad mostra una barra di avanzamento in basso e un
+  meter verticale a destra (verde → giallo → rosso, con caduta graduale). Anche nella pagina web.
+- **Inserti dalla pagina web**: aggiungere effetti integrati o plugin VST3 (tra quelli trovati nelle cartelle),
+  toglierli, spostarli, metterli in bypass e regolarne i parametri; il mixer del PC si aggiorna da solo.
+- **Mixer della pagina web come quello del programma**: canali a colonne con inserti, fader verticale, meter L/R
+  con picco, dB e MUTE, opzioni «Ascolta» del monitor; su telefono i canali scorrono di lato.
+
+### Correzioni
+- **Schermi 1920×1080 / 1920×1200 / 2K**: la finestra non poteva essere più stretta di ~1360 px (fino a 1560 con
+  nomi dei dispositivi lunghi), più dello spazio disponibile con il ridimensionamento di Windows al 125–150%.
+  Ora il minimo è ~820 × 520: percorso della cartella e dispositivi si accorciano con «…» (testo intero nel
+  tooltip), il mixer scorre di lato se serve.
+- Alla prima apertura la finestra prende una dimensione adatta allo schermo; una posizione salvata su uno schermo
+  più grande viene riportata dentro quello attuale.
+- Impostazioni: le sezioni (ormai otto) sono in un elenco a sinistra invece delle schede; le finestre delle
+  impostazioni e di «Personalizza…» non superano mai lo schermo e scorrono se serve.
+- Sugli schermi 2K al 100% il testo è un po' più grande; il testo dei pad cresce con la loro dimensione.
+
 ## v0.8.0 — 2026-11-03
 
 ### Novità

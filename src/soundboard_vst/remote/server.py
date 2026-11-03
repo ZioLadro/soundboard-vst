@@ -66,11 +66,17 @@ def is_tailscale(ip: str) -> bool:
 
 
 class RemoteServer:
+    """``get_levels()``: meter di canali e pad (letti spesso); ``query(nome, argomenti)``: domanda
+    eseguita nel thread dell'interfaccia (bloccante, va chiamata fuori dall'event loop)."""
+
     def __init__(self, get_state: Callable[[], dict], on_command: Callable[[dict], None],
-                 get_image: Callable[[str], Path | None]):
+                 get_image: Callable[[str], Path | None], get_levels: Callable[[], dict] = dict,
+                 query: Callable[[str, dict], dict | None] = lambda name, args: None):
         self.get_state = get_state
         self.on_command = on_command
         self.get_image = get_image
+        self.get_levels = get_levels
+        self.query = query
         self.token = ""
         self.port = DEFAULT_PORT
         self.error = ""
@@ -128,6 +134,9 @@ class RemoteServer:
         app.router.add_get("/api/state", self._state)
         app.router.add_post("/api/command", self._command)
         app.router.add_get("/api/image/{key}", self._image)
+        app.router.add_get("/api/levels", self._levels)
+        app.router.add_get("/api/effects", self._effects)
+        app.router.add_get("/api/insert", self._insert)
         return app
 
     def _authorized(self, request: web.Request) -> bool:
@@ -176,6 +185,26 @@ class RemoteServer:
             return web.json_response({"error": "comando non valido"}, status=400)
         self.on_command(cmd)
         return web.json_response({"ok": True})
+
+    async def _levels(self, request: web.Request) -> web.Response:
+        return web.json_response(self.get_levels())
+
+    async def _ask(self, name: str, args: dict) -> web.Response:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, self.query, name, args)
+        if result is None:
+            return web.json_response({"error": "non disponibile"}, status=404)
+        return web.json_response(result)
+
+    async def _effects(self, request: web.Request) -> web.Response:
+        return await self._ask("effects", {})
+
+    async def _insert(self, request: web.Request) -> web.Response:
+        try:
+            index = int(request.query.get("index", ""))
+        except ValueError:
+            return web.json_response({"error": "indice non valido"}, status=400)
+        return await self._ask("insert", {"strip": request.query.get("strip", ""), "index": index})
 
     async def _image(self, request: web.Request) -> web.StreamResponse:
         path = self.get_image(request.match_info["key"])
