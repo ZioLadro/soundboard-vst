@@ -13,6 +13,7 @@ la tua voce **più** i suoni, già mixati ed elaborati.
   - **Libreria** a sinistra con tutti i file della cartella (`wav`, `mp3`, `ogg`, `flac`, `aif/aiff`): trascina un suono su un pad per assegnarlo; i file che non sono su nessun pad appaiono in grigio.
   - Trascina un pad su un altro per spostarli o scambiarli; clic su uno slot vuoto per assegnargli un suono.
   - Cartella predefinita `Musica\Suoni`, oppure una a scelta. I file nuovi (aggiunti, trascinati dall'esplora risorse o scaricati) finiscono nel primo pad libero.
+  - Mentre un suono suona, il pad mostra l'**avanzamento** (barra in basso) e il **livello** (meter a destra).
   - Tasto destro su un pad → *Personalizza…*: **nome sul pad**, **immagine**, volume (0–200%), **inizio, fine e dissolvenze** (sulla forma d'onda), **colore** (12 colori o uno a scelta), **icona emoji**, scorciatoia da tastiera e **nota MIDI**. Dallo stesso menu: togli dal pad, rinomina il file, sposta nel cestino.
 - **Controller MIDI**: scegli il controller in Impostazioni → MIDI, poi su un suono premi **Impara** e suona una nota o un pad (note e controlli CC, con il canale). Opzionalmente la forza con cui premi (velocity) regola il volume.
   - «Sovrapponi» per far suonare lo stesso suono più volte insieme, «Stop tutto» per zittire tutto.
@@ -288,9 +289,12 @@ suoi termini di servizio, e la musica è spesso protetta da diritti: usalo per u
 1. **Impostazioni → Controllo remoto** → spunta «Attiva il controllo da browser» (porta predefinita 8765) e salva.
    La prima volta Windows chiede il permesso di rete: consenti l'accesso sulle **reti private**.
 2. Premi **📱** in alto: inquadra il **QR code** con il telefono (connesso alla stessa rete Wi-Fi) oppure copia il link.
-3. Sulla pagina trovi tre schede: **Pad** (tutte le pagine, con colori, emoji e immagini), **Player** (in riproduzione,
-   avanzamento, comandi, volume, coda; puoi incollare un link YouTube o scrivere una ricerca: viene aggiunto il primo
-   risultato) e **Mixer** (volumi e mute dei canali, avvio/ingresso/uscita del bot). Il ■ in alto ferma tutti i suoni.
+3. Sulla pagina trovi tre schede: **Pad** (tutte le pagine, con colori, emoji, immagini, avanzamento e meter dei suoni
+   che suonano), **Player** (in riproduzione, avanzamento, comandi, volume, coda; puoi incollare un link YouTube o
+   scrivere una ricerca: viene aggiunto il primo risultato) e **Mixer**, uguale a quello del programma: per ogni canale
+   inserti (aggiungi effetti integrati o plugin VST3 già trovati nelle cartelle, togli, sposta, bypass, ✎ parametri),
+   fader, meter, mute; nel monitor le opzioni «Ascolta». L'interfaccia grafica dei plugin si apre solo sul PC.
+   Più sotto, avvio/ingresso/uscita del bot. Il ■ in alto ferma tutti i suoni.
    Aggiungi la pagina alla schermata Home per usarla come un'app.
 
 Il link contiene una **chiave di accesso**: chi ce l'ha può controllare la soundboard. Dopo la prima apertura la chiave
@@ -330,6 +334,10 @@ Le impostazioni (dispositivi, cartella, pad e pagine, volumi, mixer e stato dei 
 Se senti crepitii o la barra di stato mostra molti *dropout*, aumenta il **Buffer** (1024 campioni);
 se vuoi meno latenza prova 256. 48000 Hz è la frequenza usata da Discord.
 
+## Schermo e risoluzione
+
+La finestra si adatta da 1280×720 (un 1920×1080 con il ridimensionamento di Windows al 150%) fino ai 2K/1440p: alla prima apertura prende una dimensione adatta allo schermo, i testi lunghi (cartella, dispositivi) si accorciano con «…» (il testo intero è nel tooltip), il mixer scorre di lato se non c'è spazio e le finestre delle impostazioni non superano mai lo schermo. Sugli schermi 2K al 100% il testo è un po' più grande, e quello dei pad cresce con la loro dimensione. Se preferisci tutto più grande o più piccolo, usa il ridimensionamento di Windows (*Impostazioni → Schermo → Scala*).
+
 ## Struttura del progetto
 
 ```
@@ -351,6 +359,7 @@ src/soundboard_vst/
   tts.py                 sintesi vocale (voci neurali e di sistema), cache delle frasi
   importer.py            nuovi suoni da YouTube, MyInstants, link e file (ffmpeg)
   eventlog.py            registro degli eventi (console e file giornalieri)
+  ui/screen.py           adattamento allo schermo (dimensioni, testi accorciati, sezioni a sinistra)
   audio/engine.py        motore audio: stream, mix, routing
   audio/mixer.py         canale del mixer (inserti, fader, mute, meter)
   audio/plugins.py       inserti: effetti integrati e VST3
